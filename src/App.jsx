@@ -1,6 +1,8 @@
 import React, { useEffect, useRef, useState, useCallback, useMemo } from 'react'
 import { buildXlsx, tsvTable } from './xlsx.js'
-import { syncEnabled, loadRemote, loadAllRemote, saveRemote, deleteRemote, listTandas, loadFacturas, loadAllFacturas, deleteTandaData, getSession, onAuth, signIn, signOut, userLabel } from './supabase.js'
+import { syncEnabled, getSession, onAuth, signIn, signOut, userLabel,
+  listJobs, loadFacturasByJob, loadJobStats, deleteJob, loadRevisiones, saveRevision,
+  loadAllFacturas, loadAllRevisiones, listEmpresas, createJob, uploadFiles, loadStatus, subscribeJobs } from './supabase.js'
 
 const BASE = import.meta.env.BASE_URL
 
@@ -49,6 +51,8 @@ const I = {
   user: <><circle cx="12" cy="8" r="4" /><path d="M4 21v-1a6 6 0 0 1 6-6h4a6 6 0 0 1 6 6v1" /></>,
   logout: <><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" /><path d="m16 17 5-5-5-5" /><path d="M21 12H9" /></>,
   lock: <><rect x="3" y="11" width="18" height="11" rx="2" /><path d="M7 11V7a5 5 0 0 1 10 0v4" /></>,
+  clock: <><circle cx="12" cy="12" r="9" /><path d="M12 7v5l3 2" /></>,
+  upload: <><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" /><path d="M7 9l5-5 5 5" /><path d="M12 4v12" /></>,
 }
 
 /* ===================== LOGIN (Fase B) ===================== */
@@ -98,19 +102,21 @@ const Icon = ({ d, className = 'w-5 h-5', sw = 2 }) => (
 
 /* ================================================================= */
 export default function App() {
-  const [tandas, setTandas] = useState([])
-  const [hidden, setHidden] = useState(() => lsGet(HIDDEN_KEY, []))
-  const [view, setView] = useState('dashboard')      // 'dashboard' | 'list'
-  const [sel, setSel] = useState(null)               // tanda activa {fecha, archivo, n}
+  const [jobs, setJobs] = useState([])
+  const [stats, setStats] = useState({})             // {jobId: {n,ver,rev}}
+  const [heartbeat, setHeartbeat] = useState(null)   // latido de Cowork (status)
+  const [empresas, setEmpresas] = useState([])
+  const [view, setView] = useState('dashboard')      // 'dashboard' | 'list' | 'stats'
+  const [sel, setSel] = useState(null)               // job activo
   const [items, setItems] = useState([])
-  const [marks, setMarks] = useState({})
-  const [tick, setTick] = useState(0)                // recálculo de stats del panel
-  const [confirm, setConfirm] = useState(null)       // tanda a eliminar
+  const [marks, setMarks] = useState({})             // {facturaId: {status, ...correcciones}}
+  const [upload, setUpload] = useState(false)
+  const [confirm, setConfirm] = useState(null)       // job a eliminar
   const [sync, setSync] = useState(syncEnabled ? 'idle' : 'off') // 'off'|'idle'|'saving'|'saved'|'error'
   const [session, setSession] = useState(null)
   const [authReady, setAuthReady] = useState(!syncEnabled)
-  const keyRef = useRef('')
-  const saveTimer = useRef(null)
+  const cacheKeyRef = useRef('')
+  const saveTimers = useRef({})
 
   /* sesión (login usuario+contraseña) */
   useEffect(() => {
@@ -119,89 +125,58 @@ export default function App() {
     return onAuth(s => setSession(s))
   }, [])
 
-  /* índice de tandas (Supabase si hay sync; si no, JSON) */
-  const loadIndex = useCallback(async () => {
-    if (syncEnabled) {
-      const t = await listTandas()
-      if (t) { setTandas(t); return }
-    }
-    fetch(`${BASE}data/index.json?t=` + Date.now())
-      .then(r => r.json())
-      .then(j => setTandas(j.tandas || []))
-      .catch(() => setTandas([]))
-  }, [])
-  useEffect(() => { loadIndex() }, [loadIndex])
-
-  /* al arrancar: trae el estado remoto de todas las tandas al localStorage
-     para que el panel refleje lo revisado desde cualquier dispositivo */
-  useEffect(() => {
+  /* jobs + stats + latido + empresas (Supabase, requiere sesión) */
+  const refresh = useCallback(async () => {
     if (!syncEnabled) return
-    loadAllRemote().then(all => {
-      for (const tanda in all) lsSet(revKey(tanda), all[tanda])
-      setTick(x => x + 1)
-    }).catch(() => {})
+    const [j, s, hb, emp] = await Promise.all([listJobs(), loadJobStats(), loadStatus(), listEmpresas()])
+    if (j) setJobs(j); setStats(s || {}); setHeartbeat(hb); setEmpresas(emp || [])
   }, [])
+  useEffect(() => { if (session) refresh() }, [session, refresh])
+  /* Realtime: recarga cuando cambian los jobs o el latido */
+  useEffect(() => { if (!session) return; return subscribeJobs(() => refresh()) }, [session, refresh])
 
-  /* carga de una tanda (facturas desde Supabase; si no, JSON) */
-  const openTanda = useCallback(async t => {
-    setSel(t); setView('list'); setItems([])
-    const fecha = t.fecha || t.archivo
-    keyRef.current = revKey(fecha)
-    setMarks(lsGet(keyRef.current, {}))   // local primero (instantáneo)
+  /* carga de un job (facturas + revisiones desde Supabase) */
+  const openJob = useCallback(async job => {
+    setSel(job); setView('list'); setItems([])
+    cacheKeyRef.current = 'agm_revj_' + job.id
+    setMarks(lsGet(cacheKeyRef.current, {}))   // cache local primero (instantáneo)
     window.scrollTo(0, 0)
+    const its = (await loadFacturasByJob(job.id)) || []
+    setItems(its)
+    const rev = await loadRevisiones(its.map(x => x.id))
+    const m = {}
+    for (const id in rev) { const { updated_at, ...rest } = rev[id]; m[id] = rest }
+    setMarks(m); lsSet(cacheKeyRef.current, m); setSync('saved')
+  }, [])
 
-    let items = null
-    if (syncEnabled) items = await loadFacturas(t.archivo)
-    if (!items) {
-      const j = await fetch(`${BASE}data/${t.archivo}`).then(r => r.json()).catch(() => ({ items: [] }))
-      items = j.items || []
+  /* persistencia: marcas → tabla revisiones (debounce por factura) + cache local */
+  const update = useCallback((id, patch) => setMarks(prev => {
+    const entry = { ...prev[id], ...patch }
+    const m = { ...prev, [id]: entry }
+    lsSet(cacheKeyRef.current, m)
+    if (syncEnabled) {
+      setSync('saving')
+      clearTimeout(saveTimers.current[id])
+      saveTimers.current[id] = setTimeout(() => {
+        const { status = null, ...correcciones } = entry
+        saveRevision(id, { status, correcciones }).then(ok => setSync(ok ? 'saved' : 'error')).catch(() => setSync('error'))
+      }, 600)
     }
-    setItems(items)
-
-    const mk = metaKey(fecha); const meta = lsGet(mk, {})
-    if (!meta.first) lsSet(mk, { ...meta, first: new Date().toISOString() })
-    // luego trae el estado de revisión remoto (fuente de verdad entre dispositivos)
-    if (syncEnabled) loadRemote(fecha).then(r => {
-      if (r) { lsSet(keyRef.current, r.marks); setMarks(r.marks); setSync('saved') }
-    }).catch(() => {})
-  }, [])
-
-  const persist = useCallback(m => {
-    lsSet(keyRef.current, m)
-    const fecha = keyRef.current.replace('agm_rev_', '')
-    lsSet(metaKey(fecha), { ...lsGet(metaKey(fecha), {}), last: new Date().toISOString() })
-    if (!syncEnabled) return
-    setSync('saving')
-    if (saveTimer.current) clearTimeout(saveTimer.current)
-    const snapshot = m
-    saveTimer.current = setTimeout(() => {
-      saveRemote(fecha, snapshot).then(ok => setSync(ok ? 'saved' : 'error')).catch(() => setSync('error'))
-    }, 700)
-  }, [])
-  const update = useCallback((id, patch) => setMarks(prev => { const m = { ...prev, [id]: { ...prev[id], ...patch } }; persist(m); return m }), [persist])
+    return m
+  }), [])
   const setField = (id, k, raw, num) => { let v = raw; if (num) { v = parseFloat(String(raw).replace(',', '.')); if (isNaN(v)) v = undefined } else if (k === 'fecha') v = dmyFromIso(raw); update(id, { [k]: v }) }
   const mark = (id, status) => update(id, { status })
   const rotate = id => { const it = items.find(x => x.id === id); update(id, { rot: (rotOf(it, marks) + 90) % 360 }) }
-  const reset = id => setMarks(prev => { const m = { ...prev }; const r = m[id]?.rot; m[id] = r != null ? { rot: r } : {}; persist(m); return m })
+  const reset = id => update(id, { status: undefined, base: undefined, iva: undefined, total: undefined, fecha: undefined, proveedor: undefined, num: undefined, obs: undefined })
 
-  /* borrado de una tanda (real en dev, local en producción) */
-  const removeTanda = async t => {
-    const fecha = t.fecha || t.archivo
-    if (syncEnabled) {
-      try { await deleteTandaData(fecha) } catch (e) {}   // facturas + imágenes del Storage
-      try { await deleteRemote(fecha) } catch (e) {}        // estado de revisión
-    } else {
-      try { await fetch(`${BASE}__api/delete-tanda`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ archivo: t.archivo }) }) } catch (e) {}
-    }
-    lsDel(revKey(fecha)); lsDel(metaKey(fecha))
-    const h = Array.from(new Set([...hidden, t.archivo])); setHidden(h); lsSet(HIDDEN_KEY, h)
-    setTandas(prev => prev.filter(x => x.archivo !== t.archivo))
-    setConfirm(null); setTick(x => x + 1)
-    if (sel && sel.archivo === t.archivo) { setView('dashboard'); setSel(null) }
+  /* borrar un job (facturas + imágenes + revisiones) */
+  const removeJob = async job => {
+    if (syncEnabled) { try { await deleteJob(job) } catch (e) {} }
+    lsDel('agm_revj_' + job.id)
+    setConfirm(null)
+    if (sel && sel.id === job.id) { setView('dashboard'); setSel(null) }
+    refresh()
   }
-  const restoreHidden = () => { setHidden([]); lsSet(HIDDEN_KEY, []); setTick(x => x + 1); loadIndex() }
-
-  const visibleTandas = useMemo(() => tandas.filter(t => !hidden.includes(t.archivo)), [tandas, hidden])
 
   /* editor de campos (reutilizado en lista, modal y revisión) */
   const Fields = useCallback(({ it, compact }) => {
@@ -241,7 +216,7 @@ export default function App() {
     const s = marks[it.id]; const st = s?.status === 'ver' ? 'Verificada' : s?.status === 'rev' ? 'A revisar' : 'Pendiente'
     return { fecha: F(it, marks, 'fecha'), proveedor: F(it, marks, 'proveedor'), num: F(it, marks, 'num'), base: Nv(it, marks, 'base'), iva: Nv(it, marks, 'iva'), total: Nv(it, marks, 'total'), estado: st, obs: F(it, marks, 'obs'), amber: s?.status === 'rev' || it.flag }
   })
-  const exportXlsx = () => { const blob = buildXlsx(approvedRows()); const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = 'AGM_revisado_' + (sel?.fecha || '') + '.xlsx'; a.click(); URL.revokeObjectURL(a.href) }
+  const exportXlsx = () => { const blob = buildXlsx(approvedRows()); const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = (sel?.empresa || 'AGM') + '_revisado.xlsx'; a.click(); URL.revokeObjectURL(a.href) }
   const copyTable = async () => { try { await navigator.clipboard.writeText(tsvTable(approvedRows())); alert('Tabla copiada. Pégala en Excel.') } catch (e) { alert('No se pudo copiar automáticamente.') } }
 
   if (syncEnabled && !authReady) return <div className="min-h-full grid place-items-center text-slate-400">Cargando…</div>
@@ -250,30 +225,29 @@ export default function App() {
   return (
     <div className="min-h-full">
       {view === 'dashboard' &&
-        <Dashboard tandas={visibleTandas} hiddenCount={hidden.length} tick={tick} sync={sync} session={session} onOpen={openTanda} onDelete={setConfirm} onRestore={restoreHidden} onStats={() => setView('stats')} />}
+        <Dashboard jobs={jobs} stats={stats} heartbeat={heartbeat} sync={sync} session={session}
+          onOpen={openJob} onDelete={setConfirm} onStats={() => setView('stats')} onUpload={() => setUpload(true)} />}
       {view === 'stats' &&
         <StatsView onBack={() => setView('dashboard')} />}
       {view === 'list' &&
         <ListView sel={sel} items={items} marks={marks} Fields={Fields} mark={mark} reset={reset} rotate={rotate} sync={sync}
           exportXlsx={exportXlsx} copyTable={copyTable} setField={setField} update={update}
-          onBack={() => { setView('dashboard'); setTick(x => x + 1); }} onDelete={() => setConfirm(sel)} />}}
+          onBack={() => { setView('dashboard'); refresh() }} onDelete={() => setConfirm(sel)} />}
 
-      {confirm && <ConfirmDelete tanda={confirm} onCancel={() => setConfirm(null)} onConfirm={() => removeTanda(confirm)} />}
+      {upload && <UploadModal empresas={empresas} onClose={() => setUpload(false)} onDone={() => { setUpload(false); refresh() }} />}
+      {confirm && <ConfirmDelete job={confirm} onCancel={() => setConfirm(null)} onConfirm={() => removeJob(confirm)} />}
     </div>
   )
 }
 
 /* ===================== PANEL (dashboard) ===================== */
-function statsOf(t) {
-  const fecha = t.fecha || t.archivo
-  const m = lsGet(revKey(fecha), {})
-  let ver = 0, rev = 0
-  for (const id in m) { if (m[id]?.status === 'ver') ver++; else if (m[id]?.status === 'rev') rev++ }
-  const total = t.n || 0
-  const pend = Math.max(0, total - ver - rev)
-  const meta = lsGet(metaKey(fecha), {})
-  return { total, ver, rev, pend, last: meta.last, first: meta.first }
+const ESTADO = {
+  en_cola:    { l: 'En cola',    c: 'bg-slate-100 text-slate-600' },
+  procesando: { l: 'Procesando', c: 'bg-indigo-100 text-indigo-700' },
+  listo:      { l: 'Listo',      c: 'bg-emerald-100 text-emerald-700' },
+  error:      { l: 'Error',      c: 'bg-rose-100 text-rose-700' },
 }
+const relDay = iso => { try { return new Date(iso).toLocaleDateString('es-ES') } catch (e) { return '—' } }
 const relTime = iso => {
   if (!iso) return '—'
   const d = (Date.now() - new Date(iso).getTime()) / 1000
@@ -283,11 +257,34 @@ const relTime = iso => {
   return `hace ${Math.floor(d / 86400)} d`
 }
 
-function Dashboard({ tandas, hiddenCount, tick, sync, session, onOpen, onDelete, onRestore, onStats }) {
-  const data = useMemo(() => tandas.map(t => ({ t, s: statsOf(t) })), [tandas, tick])
-  const g = data.reduce((a, { s }) => ({ total: a.total + s.total, ver: a.ver + s.ver, rev: a.rev + s.rev, pend: a.pend + s.pend }), { total: 0, ver: 0, rev: 0, pend: 0 })
-  const pct = g.total ? Math.round((g.ver / g.total) * 100) : 0
+function StatusBar({ heartbeat }) {
+  if (!heartbeat) return null
+  const last = heartbeat.last_run ? new Date(heartbeat.last_run).getTime() : null
+  const intMin = heartbeat.interval_min || 15
+  const now = Date.now()
+  const nextMin = last != null ? Math.round((last + intMin * 60000 - now) / 60000) : null
+  const sinceMin = last != null ? Math.round((now - last) / 60000) : null
+  const paused = last != null && sinceMin > intMin * 2 + 8
+  return (
+    <div className="rounded-2xl bg-white border border-slate-200 p-4 shadow-sm flex items-center gap-3">
+      <div className={'grid place-items-center w-10 h-10 rounded-xl ' + (heartbeat.procesando ? 'bg-indigo-100 text-indigo-600' : 'bg-slate-100 text-slate-500')}><Icon d={I.clock} /></div>
+      <div className="min-w-0">
+        <div className="text-sm font-semibold text-slate-700">Automática (IA){heartbeat.procesando ? ' · procesando…' : ''}</div>
+        <div className="text-[12px] text-slate-500">
+          {last == null ? 'aún no se ha ejecutado'
+            : nextMin > 0 ? `próxima ejecución en ~${nextMin} min` : 'ejecución inminente'}
+          {last != null && <> · última {sinceMin <= 0 ? 'hace un momento' : 'hace ' + sinceMin + ' min'}</>}
+        </div>
+      </div>
+      {paused && <span className="ml-auto text-[12px] text-amber-600 font-medium text-right leading-tight">⚠ puede estar<br />pausada</span>}
+    </div>
+  )
+}
 
+function Dashboard({ jobs, stats, heartbeat, sync, session, onOpen, onDelete, onStats, onUpload }) {
+  const g = Object.values(stats).reduce((a, s) => ({ n: a.n + s.n, ver: a.ver + s.ver, rev: a.rev + s.rev }), { n: 0, ver: 0, rev: 0 })
+  g.pend = Math.max(0, g.n - g.ver - g.rev)
+  const pct = g.n ? Math.round((g.ver / g.n) * 100) : 0
   return (
     <div className="mx-auto max-w-5xl px-4 pb-16">
       <header className="safe-t pt-7 pb-5">
@@ -295,7 +292,7 @@ function Dashboard({ tandas, hiddenCount, tick, sync, session, onOpen, onDelete,
           <div className="grid place-items-center w-10 h-10 rounded-xl bg-indigo-600 text-white shadow-lg shadow-indigo-600/30"><Icon d={I.doc} /></div>
           <div>
             <h1 className="text-xl font-bold tracking-tight text-slate-900">Revisión de facturas <span className="text-indigo-600">AGM</span></h1>
-            <p className="text-[13px] text-slate-500">Panel general · {tandas.length} {tandas.length === 1 ? 'tanda' : 'tandas'}</p>
+            <p className="text-[13px] text-slate-500">{jobs.length} {jobs.length === 1 ? 'lote' : 'lotes'}</p>
           </div>
           <div className="ml-auto self-start flex flex-col items-end gap-1.5">
             <SyncBadge sync={sync} />
@@ -304,38 +301,37 @@ function Dashboard({ tandas, hiddenCount, tick, sync, session, onOpen, onDelete,
         </div>
       </header>
 
-      {/* KPIs globales */}
+      <div className="mb-3"><StatusBar heartbeat={heartbeat} /></div>
+
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-        <Kpi n={g.total} label="Facturas" tone="slate" />
+        <Kpi n={g.n} label="Facturas" tone="slate" />
         <Kpi n={g.ver} label="Verificadas" tone="emerald" />
         <Kpi n={g.rev} label="A revisar" tone="amber" />
         <Kpi n={g.pend} label="Pendientes" tone="indigo" />
       </div>
 
-      {g.total > 0 && (
+      {g.n > 0 && (
         <div className="mt-4 rounded-2xl bg-white border border-slate-200 p-4 shadow-sm">
           <div className="flex items-center justify-between text-sm mb-2">
             <span className="font-semibold text-slate-700">Progreso global</span>
-            <span className="text-slate-500">{g.ver}/{g.total} · <b className="text-emerald-600">{pct}%</b></span>
+            <span className="text-slate-500">{g.ver}/{g.n} · <b className="text-emerald-600">{pct}%</b></span>
           </div>
           <div className="h-2.5 rounded-full bg-slate-100 overflow-hidden"><div className="h-full bg-gradient-to-r from-emerald-400 to-emerald-600 transition-all" style={{ width: pct + '%' }} /></div>
         </div>
       )}
 
-      {/* tarjetas de tandas */}
-      <div className="mt-8 mb-3 flex items-center justify-between">
-        <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-400">Tandas</h2>
-        <button onClick={onStats} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-slate-200 bg-white text-sm font-semibold text-slate-700 hover:border-indigo-300 hover:text-indigo-600 transition"><Icon d={I.chart} className="w-4 h-4" /> Estadísticas</button>
+      <div className="mt-8 mb-3 flex items-center justify-between gap-2">
+        <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-400">Lotes</h2>
+        <div className="flex items-center gap-2">
+          <button onClick={onStats} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-slate-200 bg-white text-sm font-semibold text-slate-700 hover:border-indigo-300 hover:text-indigo-600 transition"><Icon d={I.chart} className="w-4 h-4" /> <span className="hidden sm:inline">Estadísticas</span></button>
+          <button onClick={onUpload} className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg bg-indigo-600 text-white text-sm font-semibold shadow shadow-indigo-600/30 hover:bg-indigo-700 transition"><Icon d={I.upload} className="w-4 h-4" /> Subir facturas</button>
+        </div>
       </div>
-      {tandas.length === 0
-        ? <div className="rounded-2xl border border-dashed border-slate-300 bg-white/60 p-10 text-center text-slate-500">No hay tandas. Añade un <code className="text-indigo-600">.json</code> a <code>public/data/</code> y refréscalo en <code>index.json</code>.</div>
+      {jobs.length === 0
+        ? <div className="rounded-2xl border border-dashed border-slate-300 bg-white/60 p-10 text-center text-slate-500">No hay lotes todavía. Pulsa <b>Subir facturas</b> para crear el primero.</div>
         : <div className="grid sm:grid-cols-2 gap-3">
-            {data.map(({ t, s }) => <TandaCard key={t.archivo} t={t} s={s} onOpen={() => onOpen(t)} onDelete={() => onDelete(t)} />)}
+            {jobs.map(j => <JobCard key={j.id} job={j} s={stats[j.id]} onOpen={() => onOpen(j)} onDelete={() => onDelete(j)} />)}
           </div>}
-
-      {hiddenCount > 0 && (
-        <button onClick={onRestore} className="mt-6 text-[13px] text-slate-500 hover:text-indigo-600 underline underline-offset-2">Restaurar {hiddenCount} tanda(s) oculta(s)</button>
-      )}
     </div>
   )
 }
@@ -350,37 +346,85 @@ const Kpi = ({ n, label, tone }) => {
   )
 }
 
-function TandaCard({ t, s, onOpen, onDelete }) {
-  const pct = s.total ? Math.round((s.ver / s.total) * 100) : 0
-  const done = s.total > 0 && s.ver === s.total
+function JobCard({ job, s, onOpen, onDelete }) {
+  const est = ESTADO[job.estado] || ESTADO.en_cola
+  const n = s?.n ?? job.n_facturas ?? 0
+  const ver = s?.ver ?? 0, rev = s?.rev ?? 0
+  const pend = Math.max(0, n - ver - rev)
+  const pct = n ? Math.round((ver / n) * 100) : 0
+  const done = n > 0 && ver === n
   return (
     <div className="group rounded-2xl bg-white border border-slate-200 shadow-sm hover:shadow-md hover:border-indigo-300 transition overflow-hidden">
       <button onClick={onOpen} className="w-full text-left p-4">
         <div className="flex items-start justify-between gap-3">
-          <div>
-            <div className="flex items-center gap-2">
-              <span className="font-bold text-slate-900">{t.fecha}</span>
+          <div className="min-w-0">
+            <div className="flex items-center gap-2 flex-wrap">
+              <span className="font-bold text-slate-900">{job.empresa || '—'}</span>
+              <span className={'px-1.5 py-0.5 rounded text-[10px] font-bold ' + est.c}>{est.l.toUpperCase()}</span>
               {done && <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-emerald-100 text-emerald-700">COMPLETA</span>}
             </div>
-            <div className="text-[12px] text-slate-400 mt-0.5">{t.n} facturas · última revisión {relTime(s.last)}</div>
+            <div className="text-[12px] text-slate-400 mt-0.5">{n} facturas · {relDay(job.creado)} · {relTime(job.terminado || job.creado)}</div>
           </div>
-          <Icon d={I.chevR} className="w-5 h-5 text-slate-300 group-hover:text-indigo-500 transition" />
+          <Icon d={I.chevR} className="w-5 h-5 text-slate-300 group-hover:text-indigo-500 transition shrink-0" />
         </div>
-
-        <div className="mt-3 h-2 rounded-full bg-slate-100 overflow-hidden">
-          <div className="h-full bg-emerald-500 transition-all" style={{ width: pct + '%' }} />
-        </div>
-        <div className="mt-2.5 flex flex-wrap gap-x-4 gap-y-1 text-[12px]">
-          <span className="text-emerald-600 font-semibold">{s.ver} verif.</span>
-          <span className="text-amber-600 font-semibold">{s.rev} a revisar</span>
-          <span className="text-slate-500 font-semibold">{s.pend} pend.</span>
-          <span className="ml-auto text-slate-400">{pct}%</span>
-        </div>
+        {job.estado === 'listo'
+          ? <>
+              <div className="mt-3 h-2 rounded-full bg-slate-100 overflow-hidden"><div className="h-full bg-emerald-500 transition-all" style={{ width: pct + '%' }} /></div>
+              <div className="mt-2.5 flex flex-wrap gap-x-4 gap-y-1 text-[12px]">
+                <span className="text-emerald-600 font-semibold">{ver} verif.</span>
+                <span className="text-amber-600 font-semibold">{rev} a revisar</span>
+                <span className="text-slate-500 font-semibold">{pend} pend.</span>
+                <span className="ml-auto text-slate-400">{pct}%</span>
+              </div>
+            </>
+          : <div className="mt-3 text-[12px] text-slate-400">{job.estado === 'error' ? 'Error al procesar' : 'Esperando a la automática…'}</div>}
       </button>
       <div className="flex border-t border-slate-100">
         <button onClick={onOpen} className="flex-1 py-2.5 text-sm font-semibold text-indigo-600 hover:bg-indigo-50 transition">Abrir</button>
         <div className="w-px bg-slate-100" />
         <button onClick={onDelete} className="px-4 py-2.5 text-sm font-semibold text-rose-500 hover:bg-rose-50 transition flex items-center gap-1.5"><Icon d={I.trash} className="w-4 h-4" /> Eliminar</button>
+      </div>
+    </div>
+  )
+}
+
+function UploadModal({ empresas, onClose, onDone }) {
+  const [emp, setEmp] = useState('')
+  const [files, setFiles] = useState([])
+  const [busy, setBusy] = useState(false)
+  const [prog, setProg] = useState([0, 0])
+  useEffect(() => { if (!emp && empresas.length) setEmp(empresas[0].id) }, [empresas])
+  const submit = async () => {
+    if (!emp || !files.length) return
+    setBusy(true)
+    const job = await createJob({ empresa: emp, n_facturas: files.length, estado: 'en_cola' })
+    if (!job) { setBusy(false); alert('No se pudo crear el lote.'); return }
+    await uploadFiles(emp, job.id, files, (d, t) => setProg([d, t]))
+    setBusy(false); onDone()
+  }
+  return (
+    <div className="fixed inset-0 z-[60] bg-slate-950/60 flex items-center justify-center p-5" onClick={busy ? undefined : onClose}>
+      <div className="w-full max-w-md rounded-3xl bg-white p-6 card-in" onClick={e => e.stopPropagation()}>
+        <div className="grid place-items-center w-12 h-12 rounded-2xl bg-indigo-100 text-indigo-600 mb-3"><Icon d={I.upload} /></div>
+        <h2 className="text-lg font-bold text-slate-900">Subir conjunto de facturas</h2>
+        <p className="text-sm text-slate-500 mt-1">Se suben las imágenes/PDF y la IA las procesará en la próxima ejecución.</p>
+
+        <label className="block text-[13px] font-medium text-slate-600 mt-4 mb-1">Empresa</label>
+        <select value={emp} onChange={e => setEmp(e.target.value)} className="w-full rounded-xl border border-slate-300 px-3 py-2.5 bg-white focus:border-indigo-500 focus:ring-2 focus:ring-indigo-200 outline-none">
+          {empresas.length === 0 && <option value="">(sin empresas)</option>}
+          {empresas.map(e => <option key={e.id} value={e.id}>{e.nombre || e.id}</option>)}
+        </select>
+
+        <label className="block text-[13px] font-medium text-slate-600 mt-4 mb-1">Ficheros</label>
+        <input type="file" multiple accept="image/*,application/pdf" onChange={e => setFiles([...e.target.files])} className="w-full text-sm text-slate-600 file:mr-3 file:py-2 file:px-3 file:rounded-lg file:border-0 file:bg-indigo-50 file:text-indigo-700 file:font-semibold" />
+        {files.length > 0 && <p className="text-[12px] text-slate-500 mt-1.5">{files.length} fichero(s) seleccionado(s)</p>}
+
+        {busy && <div className="mt-4"><div className="h-2 rounded-full bg-slate-100 overflow-hidden"><div className="h-full bg-indigo-500 transition-all" style={{ width: (prog[1] ? (prog[0] / prog[1]) * 100 : 0) + '%' }} /></div><p className="text-[12px] text-slate-500 mt-1">Subiendo {prog[0]}/{prog[1]}…</p></div>}
+
+        <div className="flex gap-2 mt-5">
+          <button onClick={onClose} disabled={busy} className="flex-1 py-3 rounded-xl bg-slate-100 hover:bg-slate-200 font-semibold text-slate-700 disabled:opacity-50">Cancelar</button>
+          <button onClick={submit} disabled={busy || !emp || !files.length} className="flex-1 py-3 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-semibold disabled:opacity-50">{busy ? 'Subiendo…' : 'Subir'}</button>
+        </div>
       </div>
     </div>
   )
@@ -393,16 +437,16 @@ function StatsView({ onBack }) {
 
   useEffect(() => {
     let alive = true
-    Promise.all([loadAllFacturas(), loadAllRemote()]).then(([r, m]) => {
+    Promise.all([loadAllFacturas(), loadAllRevisiones()]).then(([r, m]) => {
       if (!alive) return
       setRows(r || []); setAllMarks(m || {})
     }).catch(() => { if (alive) setRows([]) })
     return () => { alive = false }
   }, [])
 
-  const ov = (row, k) => { const mk = allMarks[row.tanda]?.[row.item_id]; return mk && mk[k] != null ? mk[k] : row[k] }
+  const ov = (row, k) => { const mk = allMarks[row.id]; return mk && mk[k] != null ? mk[k] : row[k] }
   const num = (row, k) => { const v = ov(row, k); return typeof v === 'number' ? v : (parseFloat(String(v).replace(',', '.')) || 0) }
-  const statusOf = row => allMarks[row.tanda]?.[row.item_id]?.status || null
+  const statusOf = row => allMarks[row.id]?.status || null
 
   const st = useMemo(() => {
     const r = rows || []
@@ -526,7 +570,7 @@ function ListView({ sel, items, marks, Fields, mark, reset, rotate, sync, export
           <div className="flex items-center gap-3 py-3">
             <button onClick={onBack} className="grid place-items-center w-9 h-9 rounded-lg hover:bg-slate-100 text-slate-600 transition"><Icon d={I.back} /></button>
             <div className="min-w-0">
-              <h1 className="font-bold text-slate-900 leading-tight truncate">Tanda {sel?.fecha}</h1>
+              <h1 className="font-bold text-slate-900 leading-tight truncate">{sel?.empresa || 'Lote'} · {relDay(sel?.creado)}</h1>
               <div className="flex items-center gap-2"><p className="text-[12px] text-slate-500">{ver} verif · {rev} a revisar · {items.length - ver - rev} pend</p><SyncBadge sync={sync} /></div>
             </div>
             <div className="ml-auto flex items-center gap-2">
@@ -824,14 +868,13 @@ function DoneOverlay({ ver, total, onExport, onClose, onBack }) {
 }
 
 /* ===================== confirmar borrado ===================== */
-function ConfirmDelete({ tanda, onCancel, onConfirm }) {
+function ConfirmDelete({ job, onCancel, onConfirm }) {
   return (
     <div className="fixed inset-0 z-[60] bg-slate-950/60 flex items-center justify-center p-5" onClick={onCancel}>
       <div className="w-full max-w-sm rounded-3xl bg-white p-6 card-in" onClick={e => e.stopPropagation()}>
         <div className="grid place-items-center w-12 h-12 rounded-2xl bg-rose-100 text-rose-600 mb-3"><Icon d={I.trash} /></div>
-        <h2 className="text-lg font-bold text-slate-900">Eliminar tanda {tanda.fecha}</h2>
-        <p className="text-sm text-slate-500 mt-1.5">Se borrará el fichero <code className="text-rose-600">{tanda.archivo}</code> (sus {tanda.n} facturas e imágenes) y su estado de revisión. Así el proyecto no acumula datos antiguos.</p>
-        <p className="text-[12px] text-slate-400 mt-2">En desarrollo (<code>npm run dev</code>) se borra el fichero de verdad. En la web publicada solo se oculta en este navegador.</p>
+        <h2 className="text-lg font-bold text-slate-900">Eliminar lote de {job.empresa || '—'}</h2>
+        <p className="text-sm text-slate-500 mt-1.5">Se borrarán sus <b>{job.n_facturas ?? 0}</b> facturas, las imágenes del Storage y su estado de revisión. Esta acción no se puede deshacer.</p>
         <div className="flex gap-2 mt-5">
           <button onClick={onCancel} className="flex-1 py-3 rounded-xl bg-slate-100 hover:bg-slate-200 font-semibold text-slate-700">Cancelar</button>
           <button onClick={onConfirm} className="flex-1 py-3 rounded-xl bg-rose-600 hover:bg-rose-700 text-white font-semibold">Eliminar</button>
