@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState, useCallback, useMemo } from 'react'
 import { buildXlsx, tsvTable } from './xlsx.js'
-import { syncEnabled, loadRemote, loadAllRemote, saveRemote, deleteRemote } from './supabase.js'
+import { syncEnabled, loadRemote, loadAllRemote, saveRemote, deleteRemote, listTandas, loadFacturas, loadAllFacturas, deleteTandaData, getSession, onAuth, signIn, signOut, userLabel } from './supabase.js'
 
 const BASE = import.meta.env.BASE_URL
 
@@ -43,8 +43,41 @@ const I = {
   doc: <><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" /><path d="M14 2v6h6" /></>,
   chevR: <path d="m9 18 6-6-6-6" />,
   edit: <><path d="M12 20h9" /><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z" /></>,
+  chart: <><path d="M3 3v18h18" /><rect x="7" y="11" width="3" height="6" /><rect x="12" y="7" width="3" height="10" /><rect x="17" y="13" width="3" height="4" /></>,
   cloud: <path d="M17.5 19a4.5 4.5 0 0 0 .5-8.97A6 6 0 0 0 6.34 9 4 4 0 0 0 7 17h10.5z" />,
   cloudOff: <><path d="M2 2l20 20" /><path d="M17.5 19a4.5 4.5 0 0 0 1.9-8.58M9 5.5A6 6 0 0 1 18 9a4.5 4.5 0 0 1 .5.03M6.3 9A4 4 0 0 0 7 17h9" /></>,
+  user: <><circle cx="12" cy="8" r="4" /><path d="M4 21v-1a6 6 0 0 1 6-6h4a6 6 0 0 1 6 6v1" /></>,
+  logout: <><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" /><path d="m16 17 5-5-5-5" /><path d="M21 12H9" /></>,
+  lock: <><rect x="3" y="11" width="18" height="11" rx="2" /><path d="M7 11V7a5 5 0 0 1 10 0v4" /></>,
+}
+
+/* ===================== LOGIN (Fase B) ===================== */
+function Login() {
+  const [u, setU] = useState('')
+  const [p, setP] = useState('')
+  const [err, setErr] = useState('')
+  const [busy, setBusy] = useState(false)
+  const submit = async e => {
+    e.preventDefault(); setErr(''); setBusy(true)
+    const { error } = await signIn(u, p)
+    setBusy(false)
+    if (error) setErr('Usuario o contraseña incorrectos')
+  }
+  return (
+    <div className="min-h-full grid place-items-center px-4">
+      <form onSubmit={submit} className="w-full max-w-sm rounded-3xl bg-white border border-slate-200 shadow-xl p-7 card-in">
+        <div className="grid place-items-center w-12 h-12 rounded-2xl bg-indigo-600 text-white shadow-lg shadow-indigo-600/30 mb-4"><Icon d={I.lock} /></div>
+        <h1 className="text-xl font-bold text-slate-900">Revisión de facturas AGM</h1>
+        <p className="text-[13px] text-slate-500 mt-0.5 mb-5">Acceso restringido</p>
+        <label className="block text-[13px] font-medium text-slate-600 mb-1">Usuario</label>
+        <input autoFocus value={u} onChange={e => setU(e.target.value)} autoCapitalize="none" autoCorrect="off" className="w-full rounded-xl border border-slate-300 px-3 py-2.5 mb-3 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-200 outline-none" />
+        <label className="block text-[13px] font-medium text-slate-600 mb-1">Contraseña</label>
+        <input type="password" value={p} onChange={e => setP(e.target.value)} className="w-full rounded-xl border border-slate-300 px-3 py-2.5 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-200 outline-none" />
+        {err && <p className="text-[13px] text-rose-600 mt-3">{err}</p>}
+        <button type="submit" disabled={busy || !u || !p} className="mt-5 w-full py-3 rounded-xl bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white font-semibold transition">{busy ? 'Entrando…' : 'Entrar'}</button>
+      </form>
+    </div>
+  )
 }
 
 /* indicador de sincronización entre dispositivos */
@@ -74,11 +107,24 @@ export default function App() {
   const [tick, setTick] = useState(0)                // recálculo de stats del panel
   const [confirm, setConfirm] = useState(null)       // tanda a eliminar
   const [sync, setSync] = useState(syncEnabled ? 'idle' : 'off') // 'off'|'idle'|'saving'|'saved'|'error'
+  const [session, setSession] = useState(null)
+  const [authReady, setAuthReady] = useState(!syncEnabled)
   const keyRef = useRef('')
   const saveTimer = useRef(null)
 
-  /* índice de tandas */
-  const loadIndex = useCallback(() => {
+  /* sesión (login usuario+contraseña) */
+  useEffect(() => {
+    if (!syncEnabled) return
+    getSession().then(s => { setSession(s); setAuthReady(true) })
+    return onAuth(s => setSession(s))
+  }, [])
+
+  /* índice de tandas (Supabase si hay sync; si no, JSON) */
+  const loadIndex = useCallback(async () => {
+    if (syncEnabled) {
+      const t = await listTandas()
+      if (t) { setTandas(t); return }
+    }
     fetch(`${BASE}data/index.json?t=` + Date.now())
       .then(r => r.json())
       .then(j => setTandas(j.tandas || []))
@@ -96,24 +142,28 @@ export default function App() {
     }).catch(() => {})
   }, [])
 
-  /* carga de una tanda */
-  const openTanda = useCallback(t => {
+  /* carga de una tanda (facturas desde Supabase; si no, JSON) */
+  const openTanda = useCallback(async t => {
     setSel(t); setView('list'); setItems([])
     const fecha = t.fecha || t.archivo
     keyRef.current = revKey(fecha)
     setMarks(lsGet(keyRef.current, {}))   // local primero (instantáneo)
-    fetch(`${BASE}data/${t.archivo}`).then(r => r.json()).then(j => {
-      setItems(j.items || [])
-      const fe = j.fecha || fecha
-      keyRef.current = revKey(fe)
-      const mk = metaKey(fe); const meta = lsGet(mk, {})
-      if (!meta.first) lsSet(mk, { ...meta, first: new Date().toISOString() })
-      // luego trae el estado remoto (fuente de verdad entre dispositivos)
-      if (syncEnabled) loadRemote(fe).then(r => {
-        if (r) { lsSet(keyRef.current, r.marks); setMarks(r.marks); setSync('saved') }
-      }).catch(() => {})
-    })
     window.scrollTo(0, 0)
+
+    let items = null
+    if (syncEnabled) items = await loadFacturas(t.archivo)
+    if (!items) {
+      const j = await fetch(`${BASE}data/${t.archivo}`).then(r => r.json()).catch(() => ({ items: [] }))
+      items = j.items || []
+    }
+    setItems(items)
+
+    const mk = metaKey(fecha); const meta = lsGet(mk, {})
+    if (!meta.first) lsSet(mk, { ...meta, first: new Date().toISOString() })
+    // luego trae el estado de revisión remoto (fuente de verdad entre dispositivos)
+    if (syncEnabled) loadRemote(fecha).then(r => {
+      if (r) { lsSet(keyRef.current, r.marks); setMarks(r.marks); setSync('saved') }
+    }).catch(() => {})
   }, [])
 
   const persist = useCallback(m => {
@@ -137,8 +187,12 @@ export default function App() {
   /* borrado de una tanda (real en dev, local en producción) */
   const removeTanda = async t => {
     const fecha = t.fecha || t.archivo
-    try { await fetch(`${BASE}__api/delete-tanda`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ archivo: t.archivo }) }) } catch (e) {}
-    if (syncEnabled) { try { await deleteRemote(fecha) } catch (e) {} }
+    if (syncEnabled) {
+      try { await deleteTandaData(fecha) } catch (e) {}   // facturas + imágenes del Storage
+      try { await deleteRemote(fecha) } catch (e) {}        // estado de revisión
+    } else {
+      try { await fetch(`${BASE}__api/delete-tanda`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ archivo: t.archivo }) }) } catch (e) {}
+    }
     lsDel(revKey(fecha)); lsDel(metaKey(fecha))
     const h = Array.from(new Set([...hidden, t.archivo])); setHidden(h); lsSet(HIDDEN_KEY, h)
     setTandas(prev => prev.filter(x => x.archivo !== t.archivo))
@@ -190,13 +244,19 @@ export default function App() {
   const exportXlsx = () => { const blob = buildXlsx(approvedRows()); const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = 'AGM_revisado_' + (sel?.fecha || '') + '.xlsx'; a.click(); URL.revokeObjectURL(a.href) }
   const copyTable = async () => { try { await navigator.clipboard.writeText(tsvTable(approvedRows())); alert('Tabla copiada. Pégala en Excel.') } catch (e) { alert('No se pudo copiar automáticamente.') } }
 
+  if (syncEnabled && !authReady) return <div className="min-h-full grid place-items-center text-slate-400">Cargando…</div>
+  if (syncEnabled && !session) return <Login />
+
   return (
     <div className="min-h-full">
-      {view === 'dashboard'
-        ? <Dashboard tandas={visibleTandas} hiddenCount={hidden.length} tick={tick} sync={sync} onOpen={openTanda} onDelete={setConfirm} onRestore={restoreHidden} />
-        : <ListView sel={sel} items={items} marks={marks} Fields={Fields} mark={mark} reset={reset} rotate={rotate} sync={sync}
-            exportXlsx={exportXlsx} copyTable={copyTable} setField={setField} update={update}
-            onBack={() => { setView('dashboard'); setTick(x => x + 1); }} onDelete={() => setConfirm(sel)} />}
+      {view === 'dashboard' &&
+        <Dashboard tandas={visibleTandas} hiddenCount={hidden.length} tick={tick} sync={sync} session={session} onOpen={openTanda} onDelete={setConfirm} onRestore={restoreHidden} onStats={() => setView('stats')} />}
+      {view === 'stats' &&
+        <StatsView onBack={() => setView('dashboard')} />}
+      {view === 'list' &&
+        <ListView sel={sel} items={items} marks={marks} Fields={Fields} mark={mark} reset={reset} rotate={rotate} sync={sync}
+          exportXlsx={exportXlsx} copyTable={copyTable} setField={setField} update={update}
+          onBack={() => { setView('dashboard'); setTick(x => x + 1); }} onDelete={() => setConfirm(sel)} />}}
 
       {confirm && <ConfirmDelete tanda={confirm} onCancel={() => setConfirm(null)} onConfirm={() => removeTanda(confirm)} />}
     </div>
@@ -223,7 +283,7 @@ const relTime = iso => {
   return `hace ${Math.floor(d / 86400)} d`
 }
 
-function Dashboard({ tandas, hiddenCount, tick, sync, onOpen, onDelete, onRestore }) {
+function Dashboard({ tandas, hiddenCount, tick, sync, session, onOpen, onDelete, onRestore, onStats }) {
   const data = useMemo(() => tandas.map(t => ({ t, s: statsOf(t) })), [tandas, tick])
   const g = data.reduce((a, { s }) => ({ total: a.total + s.total, ver: a.ver + s.ver, rev: a.rev + s.rev, pend: a.pend + s.pend }), { total: 0, ver: 0, rev: 0, pend: 0 })
   const pct = g.total ? Math.round((g.ver / g.total) * 100) : 0
@@ -237,7 +297,10 @@ function Dashboard({ tandas, hiddenCount, tick, sync, onOpen, onDelete, onRestor
             <h1 className="text-xl font-bold tracking-tight text-slate-900">Revisión de facturas <span className="text-indigo-600">AGM</span></h1>
             <p className="text-[13px] text-slate-500">Panel general · {tandas.length} {tandas.length === 1 ? 'tanda' : 'tandas'}</p>
           </div>
-          <div className="ml-auto self-start"><SyncBadge sync={sync} /></div>
+          <div className="ml-auto self-start flex flex-col items-end gap-1.5">
+            <SyncBadge sync={sync} />
+            {session && <button onClick={signOut} className="flex items-center gap-1.5 text-[12px] text-slate-500 hover:text-rose-600 transition" title="Cerrar sesión"><Icon d={I.user} className="w-3.5 h-3.5" /> {userLabel(session)} <Icon d={I.logout} className="w-3.5 h-3.5" /></button>}
+          </div>
         </div>
       </header>
 
@@ -260,7 +323,10 @@ function Dashboard({ tandas, hiddenCount, tick, sync, onOpen, onDelete, onRestor
       )}
 
       {/* tarjetas de tandas */}
-      <h2 className="mt-8 mb-3 text-sm font-semibold uppercase tracking-wide text-slate-400">Tandas</h2>
+      <div className="mt-8 mb-3 flex items-center justify-between">
+        <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-400">Tandas</h2>
+        <button onClick={onStats} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-slate-200 bg-white text-sm font-semibold text-slate-700 hover:border-indigo-300 hover:text-indigo-600 transition"><Icon d={I.chart} className="w-4 h-4" /> Estadísticas</button>
+      </div>
       {tandas.length === 0
         ? <div className="rounded-2xl border border-dashed border-slate-300 bg-white/60 p-10 text-center text-slate-500">No hay tandas. Añade un <code className="text-indigo-600">.json</code> a <code>public/data/</code> y refréscalo en <code>index.json</code>.</div>
         : <div className="grid sm:grid-cols-2 gap-3">
@@ -319,6 +385,111 @@ function TandaCard({ t, s, onOpen, onDelete }) {
     </div>
   )
 }
+
+/* ===================== ESTADÍSTICAS (Fase C) ===================== */
+function StatsView({ onBack }) {
+  const [rows, setRows] = useState(null)
+  const [allMarks, setAllMarks] = useState({})
+
+  useEffect(() => {
+    let alive = true
+    Promise.all([loadAllFacturas(), loadAllRemote()]).then(([r, m]) => {
+      if (!alive) return
+      setRows(r || []); setAllMarks(m || {})
+    }).catch(() => { if (alive) setRows([]) })
+    return () => { alive = false }
+  }, [])
+
+  const ov = (row, k) => { const mk = allMarks[row.tanda]?.[row.item_id]; return mk && mk[k] != null ? mk[k] : row[k] }
+  const num = (row, k) => { const v = ov(row, k); return typeof v === 'number' ? v : (parseFloat(String(v).replace(',', '.')) || 0) }
+  const statusOf = row => allMarks[row.tanda]?.[row.item_id]?.status || null
+
+  const st = useMemo(() => {
+    const r = rows || []
+    let ver = 0, rev = 0, base = 0, iva = 0, total = 0
+    const prov = {}, mes = {}
+    for (const row of r) {
+      const s = statusOf(row); if (s === 'ver') ver++; else if (s === 'rev') rev++
+      const b = num(row, 'base'), i = num(row, 'iva'), t = num(row, 'total')
+      base += b; iva += i; total += t
+      const p = (ov(row, 'proveedor') || '—').trim()
+      prov[p] = prov[p] || { n: 0, total: 0 }; prov[p].n++; prov[p].total += t
+      const iso = isoFromDMY(ov(row, 'fecha') || ''); const mm = iso ? iso.slice(0, 7) : '—'
+      mes[mm] = mes[mm] || { n: 0, total: 0 }; mes[mm].n++; mes[mm].total += t
+    }
+    const topProv = Object.entries(prov).map(([k, v]) => ({ k, ...v })).sort((a, b) => b.total - a.total).slice(0, 8)
+    const byMes = Object.entries(mes).map(([k, v]) => ({ k, ...v })).sort((a, b) => a.k < b.k ? -1 : 1)
+    return { n: r.length, ver, rev, pend: r.length - ver - rev, base, iva, total, topProv, byMes }
+  }, [rows, allMarks])
+
+  const MES = ['ene', 'feb', 'mar', 'abr', 'may', 'jun', 'jul', 'ago', 'sep', 'oct', 'nov', 'dic']
+  const mesLabel = k => k === '—' ? '—' : `${MES[+k.slice(5, 7) - 1]} ${k.slice(0, 4)}`
+  const maxMes = Math.max(1, ...st.byMes.map(m => m.total))
+  const maxProv = Math.max(1, ...st.topProv.map(p => p.total))
+
+  return (
+    <div className="mx-auto max-w-5xl px-4 pb-16">
+      <header className="safe-t pt-6 pb-5 flex items-center gap-3">
+        <button onClick={onBack} className="grid place-items-center w-9 h-9 rounded-lg hover:bg-slate-100 text-slate-600 transition"><Icon d={I.back} /></button>
+        <div>
+          <h1 className="text-xl font-bold tracking-tight text-slate-900">Estadísticas</h1>
+          <p className="text-[13px] text-slate-500">Sobre todas las tandas</p>
+        </div>
+      </header>
+
+      {rows === null
+        ? <p className="text-slate-400 py-10 text-center">Cargando…</p>
+        : rows.length === 0
+        ? <p className="text-slate-400 py-10 text-center">Sin datos todavía.</p>
+        : <>
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+            <Kpi n={st.n} label="Facturas" tone="slate" />
+            <Kpi n={st.ver} label="Verificadas" tone="emerald" />
+            <Kpi n={st.rev} label="A revisar" tone="amber" />
+            <Kpi n={st.pend} label="Pendientes" tone="indigo" />
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mt-3">
+            <Money label="Base imponible" v={st.base} />
+            <Money label="IVA / IPSI acumulado" v={st.iva} accent="indigo" />
+            <Money label="Total facturado" v={st.total} accent="emerald" />
+          </div>
+
+          {/* por mes */}
+          <h2 className="mt-8 mb-3 text-sm font-semibold uppercase tracking-wide text-slate-400">Por mes</h2>
+          <div className="rounded-2xl bg-white border border-slate-200 p-4 shadow-sm space-y-2.5">
+            {st.byMes.map(m => (
+              <div key={m.k} className="flex items-center gap-3">
+                <span className="w-16 shrink-0 text-[13px] text-slate-500">{mesLabel(m.k)}</span>
+                <div className="flex-1 h-5 rounded-md bg-slate-100 overflow-hidden"><div className="h-full bg-gradient-to-r from-indigo-400 to-indigo-600 rounded-md" style={{ width: Math.max(3, (m.total / maxMes) * 100) + '%' }} /></div>
+                <span className="w-24 shrink-0 text-right text-[13px] font-semibold tabular-nums text-slate-700">{eur(m.total)}</span>
+                <span className="w-8 shrink-0 text-right text-[12px] text-slate-400">{m.n}</span>
+              </div>
+            ))}
+          </div>
+
+          {/* top proveedores */}
+          <h2 className="mt-8 mb-3 text-sm font-semibold uppercase tracking-wide text-slate-400">Top proveedores</h2>
+          <div className="rounded-2xl bg-white border border-slate-200 p-4 shadow-sm space-y-2.5">
+            {st.topProv.map(p => (
+              <div key={p.k} className="flex items-center gap-3">
+                <span className="w-40 shrink-0 text-[13px] text-slate-600 truncate" title={p.k}>{p.k}</span>
+                <div className="flex-1 h-5 rounded-md bg-slate-100 overflow-hidden"><div className="h-full bg-gradient-to-r from-emerald-400 to-emerald-600 rounded-md" style={{ width: Math.max(3, (p.total / maxProv) * 100) + '%' }} /></div>
+                <span className="w-24 shrink-0 text-right text-[13px] font-semibold tabular-nums text-slate-700">{eur(p.total)}</span>
+                <span className="w-8 shrink-0 text-right text-[12px] text-slate-400">{p.n}</span>
+              </div>
+            ))}
+          </div>
+        </>}
+    </div>
+  )
+}
+const Money = ({ label, v, accent }) => (
+  <div className="rounded-2xl bg-white border border-slate-200 p-4 shadow-sm">
+    <div className="text-[13px] text-slate-500">{label}</div>
+    <div className={'text-2xl font-extrabold tabular-nums mt-0.5 ' + (accent === 'emerald' ? 'text-emerald-600' : accent === 'indigo' ? 'text-indigo-600' : 'text-slate-900')}>{eur(v)}</div>
+  </div>
+)
 
 /* ===================== LISTA (una tanda) ===================== */
 function ListView({ sel, items, marks, Fields, mark, reset, rotate, sync, exportXlsx, copyTable, onBack, onDelete }) {
