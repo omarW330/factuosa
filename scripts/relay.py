@@ -85,9 +85,28 @@ def sb_rest(method, path, body=None, prefer=None):
         req.add_header(k, v)
     if prefer:
         req.add_header("Prefer", prefer)
-    r = urllib.request.urlopen(req)
-    raw = r.read()
-    return json.loads(raw) if raw else None
+    try:
+        r = urllib.request.urlopen(req)
+        raw = r.read()
+        return json.loads(raw) if raw else None
+    except urllib.error.HTTPError as e:
+        detail = e.read().decode("utf-8", "replace")[:500]
+        raise RuntimeError(f"{method} {path} → HTTP {e.code}: {detail}")
+
+def tonum(v):
+    if v is None or v == "":
+        return None
+    if isinstance(v, (int, float)):
+        return v
+    s = str(v).strip().replace("€", "").replace(" ", "")
+    if "," in s and "." in s:      # formato 1.234,56
+        s = s.replace(".", "").replace(",", ".")
+    else:
+        s = s.replace(",", ".")
+    try:
+        return float(s)
+    except Exception:
+        return None
 
 def sb_storage_list(bucket, prefix):
     url = SB_URL + "/storage/v1/object/list/" + bucket
@@ -157,33 +176,39 @@ def relay_down(tok):
         emp = job[0].get("empresa")
         try:
             data = json.loads(dbx_download(tok, e["path_lower"]).decode("utf-8"))
+            items = data.get("items", []) if isinstance(data, dict) else (data if isinstance(data, list) else [])
+            if items:
+                muestra = {k: ((str(v)[:24] + "…") if k == "img" else v) for k, v in items[0].items()}
+                print(f"  · {jid}: {len(items)} items. Muestra item[0]: {muestra}")
+            # idempotente: limpia facturas previas de ese job
+            sb_rest("DELETE", f"facturas?job_id=eq.{jid}")
+            rows, okimg = [], 0
+            for i, it in enumerate(items):
+                iid = it.get("id") or f"r{i + 1}"
+                img_path = None
+                mm = re.match(r"^data:(image/[a-z+]+);base64,(.+)$", str(it.get("img") or ""), re.I)
+                if mm:
+                    ext = EXT.get(mm.group(1).lower(), "jpg")
+                    img_path = f"{jid}/{iid}.{ext}"
+                    try:
+                        sb_storage_upload("facturas", img_path, base64.b64decode(mm.group(2)), mm.group(1)); okimg += 1
+                    except Exception as ex:
+                        print(f"    ✗ img {iid}: {ex}"); img_path = None
+                rows.append({
+                    "job_id": jid, "empresa": emp, "item_id": iid, "img_path": img_path,
+                    "rot0": int(tonum(it.get("rot0")) or 0), "fecha": it.get("fecha"), "proveedor": it.get("proveedor"),
+                    "num": it.get("num"), "base": tonum(it.get("base")), "iva": tonum(it.get("iva")), "total": tonum(it.get("total")),
+                    "timp": it.get("timp"), "conf": it.get("conf"), "flag": bool(it.get("flag")), "obs": it.get("obs"),
+                })
+            if rows:
+                sb_rest("POST", "facturas", rows)
+            sb_rest("PATCH", f"jobs?id=eq.{jid}", {"estado": "listo", "n_facturas": len(rows), "terminado": "now()"})
+            dbx_move(tok, e["path_lower"], f"{WEB}/procesados/{name}")
+            print(f"  ✓ {jid}: {len(rows)} facturas ({okimg} imágenes) → Supabase, job=listo")
         except Exception as ex:
-            print(f"  ✗ {name}: no se pudo leer ({ex})"); continue
-        items = data.get("items", [])
-        # idempotente: limpia facturas previas de ese job
-        sb_rest("DELETE", f"facturas?job_id=eq.{jid}")
-        rows, okimg = [], 0
-        for it in items:
-            img_path = None
-            mm = re.match(r"^data:(image/[a-z+]+);base64,(.+)$", str(it.get("img") or ""), re.I)
-            if mm:
-                ext = EXT.get(mm.group(1).lower(), "jpg")
-                img_path = f"{jid}/{it.get('id')}.{ext}"
-                try:
-                    sb_storage_upload("facturas", img_path, base64.b64decode(mm.group(2)), mm.group(1)); okimg += 1
-                except Exception as ex:
-                    print(f"    ✗ img {it.get('id')}: {ex}"); img_path = None
-            rows.append({
-                "job_id": jid, "empresa": emp, "item_id": it.get("id"), "img_path": img_path,
-                "rot0": it.get("rot0", 0), "fecha": it.get("fecha"), "proveedor": it.get("proveedor"),
-                "num": it.get("num"), "base": it.get("base"), "iva": it.get("iva"), "total": it.get("total"),
-                "timp": it.get("timp"), "conf": it.get("conf"), "flag": bool(it.get("flag")), "obs": it.get("obs"),
-            })
-        if rows:
-            sb_rest("POST", "facturas", rows)
-        sb_rest("PATCH", f"jobs?id=eq.{jid}", {"estado": "listo", "n_facturas": len(rows), "terminado": "now()"})
-        dbx_move(tok, e["path_lower"], f"{WEB}/procesados/{name}")
-        print(f"  ✓ {jid}: {len(rows)} facturas ({okimg} imágenes) → Supabase, job=listo")
+            print(f"  ✗ {jid}: ERROR procesando → {ex}")
+            try: sb_rest("PATCH", f"jobs?id=eq.{jid}", {"estado": "error"})
+            except Exception: pass
 
 
 def volcar_status(tok, path):
