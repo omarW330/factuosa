@@ -732,8 +732,13 @@ function ReviewMode({ items, marks, setReview, mark, rotate, Fields, exportXlsx,
   const tf = useRef({ tx: 0, ty: 0, sc: 1, rot: 0, fit: 1 })
   const it = items[idx]
   const t0 = useRef(Date.now()), [clock, setClock] = useState('00:00'), countRef = useRef(0)
+  const [swipeMode, setSwipeMode] = useState(() => { try { return localStorage.getItem('agm_swipe') !== '0' } catch (e) { return true } })
+  const swipeRef = useRef(swipeMode)
+  useEffect(() => { swipeRef.current = swipeMode; try { localStorage.setItem('agm_swipe', swipeMode ? '1' : '0') } catch (e) {} }, [swipeMode])
 
   useEffect(() => { const i = setInterval(() => setClock(fmtT(Date.now() - t0.current)), 500); return () => clearInterval(i) }, [])
+  /* precarga TODAS las fotos en caché al entrar a revisión (evita esperas al pasar) */
+  useEffect(() => { const pre = items.map(it => { const im = new Image(); im.src = it.img; return im }); return () => pre.forEach(im => { im.src = '' }) }, [])
   const apply = () => { const t = tf.current; if (imgRef.current) imgRef.current.style.transform = `translate(-50%,-50%) translate(${t.tx}px,${t.ty}px) rotate(${t.rot}deg) scale(${t.sc})` }
   const fit = () => { const im = imgRef.current, vp = vpRef.current; if (!im || !im.naturalWidth) return; const s = (Math.min(vp.clientWidth / im.naturalWidth, vp.clientHeight / im.naturalHeight) || 1) * .95; tf.current = { ...tf.current, tx: 0, ty: 0, sc: s, fit: s }; apply() }
   const setStamp = () => { const st = marks[it?.id]?.status; if (stampRef.current) { stampRef.current.style.display = st ? 'block' : 'none'; stampRef.current.className = 'absolute top-5 left-1/2 -translate-x-1/2 -rotate-6 px-5 py-2 rounded-xl border-4 font-black text-2xl z-20 ' + (st === 'ver' ? 'text-emerald-600 border-emerald-500 bg-emerald-50/90' : 'text-amber-600 border-amber-500 bg-amber-50/90'); stampRef.current.textContent = st === 'ver' ? '✓ VERIFICADA' : st === 'rev' ? '⚑ PENDIENTE' : '' } }
@@ -752,10 +757,15 @@ function ReviewMode({ items, marks, setReview, mark, rotate, Fields, exportXlsx,
     setTimeout(() => { el.style.opacity = 0; el.style.transform = 'translate(-50%,-50%) scale(.5)'; next() }, 380)
   }
 
-  /* gestos (swipe tipo Tinder + paneo con zoom) */
+  /* gestos: pinch (2 dedos) = zoom · 1 dedo = swipe (modo Tinder) o paneo */
   useEffect(() => {
     const vp = vpRef.current; if (!vp) return
-    let mode = null, sx = 0, sy = 0, bx = 0, by = 0, sdx = 0, dragging = false
+    const pts = new Map()
+    let mode = null, sx = 0, sy = 0, bx = 0, by = 0, sdx = 0
+    let sd = 0, ssc = 1, smx = 0, smy = 0, btx = 0, bty = 0   // estado del pinch
+    const arr = () => [...pts.values()]
+    const dist = () => { const p = arr(); return Math.hypot(p[0].x - p[1].x, p[0].y - p[1].y) }
+    const mid = () => { const p = arr(); return [(p[0].x + p[1].x) / 2, (p[0].y + p[1].y) / 2] }
     const swipe = dx => {
       const im = imgRef.current; im.style.transition = 'none'; const t = tf.current
       im.style.transform = `translate(-50%,-50%) translate(${t.tx + dx}px,${t.ty}px) rotate(${t.rot + dx * 0.04}deg) scale(${t.sc})`
@@ -765,9 +775,39 @@ function ReviewMode({ items, marks, setReview, mark, rotate, Fields, exportXlsx,
     }
     const clear = () => { const im = imgRef.current; im.style.transition = 'transform .2s'; apply(); iconRef.current.style.opacity = 0; tintRef.current.style.opacity = 0; setTimeout(() => { im.style.transition = 'none' }, 210) }
     const fly = dir => { const im = imgRef.current; im.style.transition = 'transform .26s ease-out'; const t = tf.current; im.style.transform = `translate(-50%,-50%) translate(${dir * window.innerWidth}px,${t.ty}px) rotate(${dir * 20}deg) scale(${t.sc})`; iconRef.current.style.opacity = 0; tintRef.current.style.opacity = 0; setTimeout(() => { im.style.transition = 'none'; doMark(dir > 0 ? 'ver' : 'rev', true) }, 240) }
-    const down = e => { if (e.target.closest('.vpctrl')) return; mode = tf.current.sc <= tf.current.fit * 1.18 ? 'swipe' : 'pan'; sx = e.clientX; sy = e.clientY; bx = tf.current.tx; by = tf.current.ty; sdx = 0; dragging = true; try { vp.setPointerCapture(e.pointerId) } catch (_) {}; e.preventDefault() }
-    const move = e => { if (!dragging) return; const dx = e.clientX - sx, dy = e.clientY - sy; if (mode === 'pan') { tf.current.tx = bx + dx; tf.current.ty = by + dy; apply() } else { sdx = dx; swipe(dx) } }
-    const up = () => { if (!dragging) return; dragging = false; if (mode === 'swipe') { const TH = Math.min(150, vp.clientWidth * 0.26); if (sdx > TH) fly(1); else if (sdx < -TH) fly(-1); else clear() } mode = null }
+    const down = e => {
+      if (e.target.closest('.vpctrl')) return
+      pts.set(e.pointerId, { x: e.clientX, y: e.clientY })
+      try { vp.setPointerCapture(e.pointerId) } catch (_) {}
+      e.preventDefault()
+      if (pts.size === 2) { mode = 'pinch'; sd = dist(); ssc = tf.current.sc;[smx, smy] = mid(); btx = tf.current.tx; bty = tf.current.ty; iconRef.current.style.opacity = 0; tintRef.current.style.opacity = 0 }
+      else if (pts.size === 1) { sx = e.clientX; sy = e.clientY; bx = tf.current.tx; by = tf.current.ty; sdx = 0; mode = (swipeRef.current && tf.current.sc <= tf.current.fit * 1.18) ? 'swipe' : 'pan' }
+    }
+    const move = e => {
+      if (!pts.has(e.pointerId)) return
+      pts.set(e.pointerId, { x: e.clientX, y: e.clientY })
+      if (mode === 'pinch' && pts.size >= 2) {
+        const d = dist(), [mx, my] = mid()
+        tf.current.sc = Math.min(10, Math.max(0.1, ssc * (d / (sd || 1))))
+        tf.current.tx = btx + (mx - smx); tf.current.ty = bty + (my - smy); apply(); return
+      }
+      if (mode == null) return
+      const dx = e.clientX - sx
+      if (mode === 'pan') { tf.current.tx = bx + dx; tf.current.ty = by + (e.clientY - sy); apply() }
+      else if (mode === 'swipe') { sdx = dx; swipe(dx) }
+    }
+    const up = e => {
+      pts.delete(e.pointerId)
+      if (mode === 'pinch') {
+        if (pts.size < 2) {
+          if (tf.current.sc <= tf.current.fit * 1.02) fit()
+          if (pts.size === 1) { const p = arr()[0]; sx = p.x; sy = p.y; bx = tf.current.tx; by = tf.current.ty; mode = 'pan' } else mode = null
+        }
+        return
+      }
+      if (mode === 'swipe') { const TH = Math.min(150, vp.clientWidth * 0.26); if (sdx > TH) fly(1); else if (sdx < -TH) fly(-1); else clear() }
+      if (pts.size === 0) mode = null
+    }
     const wheel = e => { e.preventDefault(); zoom(e.deltaY < 0 ? 1.12 : 0.89) }
     vp.addEventListener('pointerdown', down); vp.addEventListener('pointermove', move); vp.addEventListener('pointerup', up); vp.addEventListener('pointercancel', up); vp.addEventListener('wheel', wheel, { passive: false })
     return () => { vp.removeEventListener('pointerdown', down); vp.removeEventListener('pointermove', move); vp.removeEventListener('pointerup', up); vp.removeEventListener('pointercancel', up); vp.removeEventListener('wheel', wheel) }
@@ -811,7 +851,11 @@ function ReviewMode({ items, marks, setReview, mark, rotate, Fields, exportXlsx,
         <div className="flex items-center gap-3 px-4 py-3">
           <span className="font-bold tabular-nums">{idx + 1}<span className="text-slate-500 dark:text-slate-400">/{items.length}</span></span>
           <span className="text-sm text-slate-400 tabular-nums">⏱ {clock}{countRef.current ? ` · ${countRef.current}` : ''}</span>
-          <div className="ml-auto flex items-center gap-1.5">
+          <button onClick={() => setSwipeMode(s => !s)} title={swipeMode ? 'Modo deslizar (toca para usar botones)' : 'Modo botones (toca para deslizar)'}
+            className={'ml-auto flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[12px] font-semibold transition ' + (swipeMode ? 'bg-indigo-500/20 text-indigo-300' : 'bg-slate-800 text-slate-300')}>
+            <Icon d={swipeMode ? I.play : I.check} className="w-3.5 h-3.5" /> {swipeMode ? 'Deslizar' : 'Botones'}
+          </button>
+          <div className="flex items-center gap-1.5">
             <button onClick={prev} className="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-sm">◀</button>
             <button onClick={next} className="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-sm">▶</button>
             <button onClick={() => setReview(false)} className="grid place-items-center w-9 h-9 rounded-lg bg-slate-800 hover:bg-slate-700"><Icon d={I.x} className="w-4 h-4" /></button>
@@ -834,7 +878,7 @@ function ReviewMode({ items, marks, setReview, mark, rotate, Fields, exportXlsx,
             <CtrlBtn d={I.rotate} onClick={rot90} />
             <CtrlBtn d={I.fit} onClick={fit} />
           </div>
-          <div className="absolute left-3 bottom-3 text-[11px] text-slate-400 bg-slate-900/70 rounded-md px-2 py-1 pointer-events-none">Desliza ▶ verificar · ◀ a revisar</div>
+          <div className="absolute left-3 bottom-3 text-[11px] text-slate-400 bg-slate-900/70 rounded-md px-2 py-1 pointer-events-none">{swipeMode ? 'Desliza ▶ verificar · ◀ a revisar · 2 dedos = zoom' : 'Valida con los botones · 2 dedos = zoom'}</div>
           <div ref={toastRef} className="absolute left-1/2 top-1/2 text-[120px] leading-none pointer-events-none z-30" style={{ opacity: 0, transform: 'translate(-50%,-50%) scale(.5)', transition: 'all .2s' }} />
         </div>
 
