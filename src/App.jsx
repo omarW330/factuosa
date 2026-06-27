@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState, useCallback, useMemo } from 'react'
 import { buildXlsx, tsvTable } from './xlsx.js'
+import { syncEnabled, loadRemote, loadAllRemote, saveRemote, deleteRemote } from './supabase.js'
 
 const BASE = import.meta.env.BASE_URL
 
@@ -42,6 +43,21 @@ const I = {
   doc: <><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" /><path d="M14 2v6h6" /></>,
   chevR: <path d="m9 18 6-6-6-6" />,
   edit: <><path d="M12 20h9" /><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z" /></>,
+  cloud: <path d="M17.5 19a4.5 4.5 0 0 0 .5-8.97A6 6 0 0 0 6.34 9 4 4 0 0 0 7 17h10.5z" />,
+  cloudOff: <><path d="M2 2l20 20" /><path d="M17.5 19a4.5 4.5 0 0 0 1.9-8.58M9 5.5A6 6 0 0 1 18 9a4.5 4.5 0 0 1 .5.03M6.3 9A4 4 0 0 0 7 17h9" /></>,
+}
+
+/* indicador de sincronización entre dispositivos */
+function SyncBadge({ sync }) {
+  if (sync === 'off') return <span className="flex items-center gap-1 text-[12px] text-slate-400" title="Sincronización desactivada (solo este navegador)"><Icon d={I.cloudOff} className="w-4 h-4" /> Solo local</span>
+  const map = {
+    idle: { c: 'text-slate-400', t: 'Sincronizado entre dispositivos', l: 'En la nube' },
+    saving: { c: 'text-indigo-500', t: 'Guardando…', l: 'Guardando…' },
+    saved: { c: 'text-emerald-600', t: 'Guardado en la nube', l: 'Guardado' },
+    error: { c: 'text-rose-500', t: 'Error al sincronizar (guardado en este equipo)', l: 'Sin conexión' },
+  }
+  const s = map[sync] || map.idle
+  return <span className={'flex items-center gap-1 text-[12px] ' + s.c} title={s.t}><Icon d={I.cloud} className="w-4 h-4" /> {s.l}</span>
 }
 const Icon = ({ d, className = 'w-5 h-5', sw = 2 }) => (
   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={sw} strokeLinecap="round" strokeLinejoin="round" className={className}>{d}</svg>
@@ -57,7 +73,9 @@ export default function App() {
   const [marks, setMarks] = useState({})
   const [tick, setTick] = useState(0)                // recálculo de stats del panel
   const [confirm, setConfirm] = useState(null)       // tanda a eliminar
+  const [sync, setSync] = useState(syncEnabled ? 'idle' : 'off') // 'off'|'idle'|'saving'|'saved'|'error'
   const keyRef = useRef('')
+  const saveTimer = useRef(null)
 
   /* índice de tandas */
   const loadIndex = useCallback(() => {
@@ -68,16 +86,32 @@ export default function App() {
   }, [])
   useEffect(() => { loadIndex() }, [loadIndex])
 
+  /* al arrancar: trae el estado remoto de todas las tandas al localStorage
+     para que el panel refleje lo revisado desde cualquier dispositivo */
+  useEffect(() => {
+    if (!syncEnabled) return
+    loadAllRemote().then(all => {
+      for (const tanda in all) lsSet(revKey(tanda), all[tanda])
+      setTick(x => x + 1)
+    }).catch(() => {})
+  }, [])
+
   /* carga de una tanda */
   const openTanda = useCallback(t => {
     setSel(t); setView('list'); setItems([])
+    const fecha = t.fecha || t.archivo
+    keyRef.current = revKey(fecha)
+    setMarks(lsGet(keyRef.current, {}))   // local primero (instantáneo)
     fetch(`${BASE}data/${t.archivo}`).then(r => r.json()).then(j => {
       setItems(j.items || [])
-      const fecha = j.fecha || t.fecha || t.archivo
-      keyRef.current = revKey(fecha)
-      setMarks(lsGet(keyRef.current, {}))
-      const mk = metaKey(fecha); const meta = lsGet(mk, {})
+      const fe = j.fecha || fecha
+      keyRef.current = revKey(fe)
+      const mk = metaKey(fe); const meta = lsGet(mk, {})
       if (!meta.first) lsSet(mk, { ...meta, first: new Date().toISOString() })
+      // luego trae el estado remoto (fuente de verdad entre dispositivos)
+      if (syncEnabled) loadRemote(fe).then(r => {
+        if (r) { lsSet(keyRef.current, r.marks); setMarks(r.marks); setSync('saved') }
+      }).catch(() => {})
     })
     window.scrollTo(0, 0)
   }, [])
@@ -86,6 +120,13 @@ export default function App() {
     lsSet(keyRef.current, m)
     const fecha = keyRef.current.replace('agm_rev_', '')
     lsSet(metaKey(fecha), { ...lsGet(metaKey(fecha), {}), last: new Date().toISOString() })
+    if (!syncEnabled) return
+    setSync('saving')
+    if (saveTimer.current) clearTimeout(saveTimer.current)
+    const snapshot = m
+    saveTimer.current = setTimeout(() => {
+      saveRemote(fecha, snapshot).then(ok => setSync(ok ? 'saved' : 'error')).catch(() => setSync('error'))
+    }, 700)
   }, [])
   const update = useCallback((id, patch) => setMarks(prev => { const m = { ...prev, [id]: { ...prev[id], ...patch } }; persist(m); return m }), [persist])
   const setField = (id, k, raw, num) => { let v = raw; if (num) { v = parseFloat(String(raw).replace(',', '.')); if (isNaN(v)) v = undefined } else if (k === 'fecha') v = dmyFromIso(raw); update(id, { [k]: v }) }
@@ -97,6 +138,7 @@ export default function App() {
   const removeTanda = async t => {
     const fecha = t.fecha || t.archivo
     try { await fetch(`${BASE}__api/delete-tanda`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ archivo: t.archivo }) }) } catch (e) {}
+    if (syncEnabled) { try { await deleteRemote(fecha) } catch (e) {} }
     lsDel(revKey(fecha)); lsDel(metaKey(fecha))
     const h = Array.from(new Set([...hidden, t.archivo])); setHidden(h); lsSet(HIDDEN_KEY, h)
     setTandas(prev => prev.filter(x => x.archivo !== t.archivo))
@@ -151,8 +193,8 @@ export default function App() {
   return (
     <div className="min-h-full">
       {view === 'dashboard'
-        ? <Dashboard tandas={visibleTandas} hiddenCount={hidden.length} tick={tick} onOpen={openTanda} onDelete={setConfirm} onRestore={restoreHidden} />
-        : <ListView sel={sel} items={items} marks={marks} Fields={Fields} mark={mark} reset={reset} rotate={rotate}
+        ? <Dashboard tandas={visibleTandas} hiddenCount={hidden.length} tick={tick} sync={sync} onOpen={openTanda} onDelete={setConfirm} onRestore={restoreHidden} />
+        : <ListView sel={sel} items={items} marks={marks} Fields={Fields} mark={mark} reset={reset} rotate={rotate} sync={sync}
             exportXlsx={exportXlsx} copyTable={copyTable} setField={setField} update={update}
             onBack={() => { setView('dashboard'); setTick(x => x + 1); }} onDelete={() => setConfirm(sel)} />}
 
@@ -181,7 +223,7 @@ const relTime = iso => {
   return `hace ${Math.floor(d / 86400)} d`
 }
 
-function Dashboard({ tandas, hiddenCount, tick, onOpen, onDelete, onRestore }) {
+function Dashboard({ tandas, hiddenCount, tick, sync, onOpen, onDelete, onRestore }) {
   const data = useMemo(() => tandas.map(t => ({ t, s: statsOf(t) })), [tandas, tick])
   const g = data.reduce((a, { s }) => ({ total: a.total + s.total, ver: a.ver + s.ver, rev: a.rev + s.rev, pend: a.pend + s.pend }), { total: 0, ver: 0, rev: 0, pend: 0 })
   const pct = g.total ? Math.round((g.ver / g.total) * 100) : 0
@@ -195,6 +237,7 @@ function Dashboard({ tandas, hiddenCount, tick, onOpen, onDelete, onRestore }) {
             <h1 className="text-xl font-bold tracking-tight text-slate-900">Revisión de facturas <span className="text-indigo-600">AGM</span></h1>
             <p className="text-[13px] text-slate-500">Panel general · {tandas.length} {tandas.length === 1 ? 'tanda' : 'tandas'}</p>
           </div>
+          <div className="ml-auto self-start"><SyncBadge sync={sync} /></div>
         </div>
       </header>
 
@@ -278,7 +321,7 @@ function TandaCard({ t, s, onOpen, onDelete }) {
 }
 
 /* ===================== LISTA (una tanda) ===================== */
-function ListView({ sel, items, marks, Fields, mark, reset, rotate, exportXlsx, copyTable, onBack, onDelete }) {
+function ListView({ sel, items, marks, Fields, mark, reset, rotate, sync, exportXlsx, copyTable, onBack, onDelete }) {
   const [filter, setFilter] = useState('todas')
   const [q, setQ] = useState('')
   const [modalId, setModalId] = useState(null)
@@ -313,7 +356,7 @@ function ListView({ sel, items, marks, Fields, mark, reset, rotate, exportXlsx, 
             <button onClick={onBack} className="grid place-items-center w-9 h-9 rounded-lg hover:bg-slate-100 text-slate-600 transition"><Icon d={I.back} /></button>
             <div className="min-w-0">
               <h1 className="font-bold text-slate-900 leading-tight truncate">Tanda {sel?.fecha}</h1>
-              <p className="text-[12px] text-slate-500">{ver} verif · {rev} a revisar · {items.length - ver - rev} pend</p>
+              <div className="flex items-center gap-2"><p className="text-[12px] text-slate-500">{ver} verif · {rev} a revisar · {items.length - ver - rev} pend</p><SyncBadge sync={sync} /></div>
             </div>
             <div className="ml-auto flex items-center gap-2">
               <button onClick={() => setReview(true)} className="hidden sm:flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-indigo-600 text-white text-sm font-semibold shadow-lg shadow-indigo-600/30 hover:bg-indigo-700 transition"><Icon d={I.play} className="w-4 h-4" /> Revisar</button>

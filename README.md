@@ -45,6 +45,29 @@ node scripts/clean-data.js --all          # borra todas
 ```
 Borra los `.json` de `public/data/` y actualiza `index.json`. Luego haz commit para que el repo deje de cargar esas imágenes.
 
+## Sincronizar la revisión entre dispositivos (Supabase)
+El estado de revisión se guarda en el navegador y, si configuras Supabase, **también en la nube**, para retomar la revisión desde otro móvil/PC. Sin claves, la app funciona igual pero solo en local (indicador "Solo local").
+
+1. Crea un proyecto gratis en https://supabase.com
+2. En **SQL Editor** ejecuta:
+   ```sql
+   create table if not exists review_state (
+     tanda text primary key,
+     marks jsonb not null default '{}'::jsonb,
+     updated_at timestamptz not null default now()
+   );
+   alter table review_state enable row level security;
+   create policy "lectura"       on review_state for select using (true);
+   create policy "insercion"     on review_state for insert with check (true);
+   create policy "actualizacion" on review_state for update using (true) with check (true);
+   create policy "borrado"       on review_state for delete using (true);
+   ```
+3. En **Project Settings → API** copia la *Project URL* y la clave *anon public*.
+4. **En local**: copia `.env.example` a `.env` y rellena `VITE_SUPABASE_URL` y `VITE_SUPABASE_ANON_KEY`.
+5. **En GitHub Pages**: repo → Settings → Secrets and variables → Actions → añade `VITE_SUPABASE_URL` y `VITE_SUPABASE_ANON_KEY` (los inyecta `deploy.yml` al hacer build).
+
+> La clave `anon` es pública (va en el build). Con repo/JSON públicos el nivel de privacidad es el mismo que ya tenías; para privacidad real usa hosting privado o login.
+
 ## Despliegue (GitHub Pages, automático)
 1. Sube este repo a GitHub.
 2. Settings → **Pages** → Source: **GitHub Actions**.
