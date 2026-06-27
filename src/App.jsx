@@ -742,7 +742,19 @@ function ReviewMode({ items, marks, setReview, mark, rotate, Fields, exportXlsx,
   const apply = () => { const t = tf.current; if (imgRef.current) imgRef.current.style.transform = `translate(-50%,-50%) translate(${t.tx}px,${t.ty}px) rotate(${t.rot}deg) scale(${t.sc})` }
   const fit = () => { const im = imgRef.current, vp = vpRef.current; if (!im || !im.naturalWidth) return; const s = (Math.min(vp.clientWidth / im.naturalWidth, vp.clientHeight / im.naturalHeight) || 1) * .95; tf.current = { ...tf.current, tx: 0, ty: 0, sc: s, fit: s }; apply() }
   const setStamp = () => { const st = marks[it?.id]?.status; if (stampRef.current) { stampRef.current.style.display = st ? 'block' : 'none'; stampRef.current.className = 'absolute top-5 left-1/2 -translate-x-1/2 -rotate-6 px-5 py-2 rounded-xl border-4 font-black text-2xl z-20 ' + (st === 'ver' ? 'text-emerald-600 border-emerald-500 bg-emerald-50/90' : 'text-amber-600 border-amber-500 bg-amber-50/90'); stampRef.current.textContent = st === 'ver' ? '✓ VERIFICADA' : st === 'rev' ? '⚑ PENDIENTE' : '' } }
-  useEffect(() => { if (!it) return; tf.current.rot = ((marks[it.id]?.rot ?? it.rot0) % 360 + 360) % 360; const im = imgRef.current; if (im) { im.onload = fit; im.src = it.img; if (im.complete) fit() } apply(); setStamp() }, [idx, it])
+  useEffect(() => {
+    if (!it) return
+    tf.current.rot = ((marks[it.id]?.rot ?? it.rot0) % 360 + 360) % 360
+    tf.current.tx = 0; tf.current.ty = 0   // resetea posición (no arrastra el zoom del anterior)
+    const im = imgRef.current
+    if (im) {
+      im.style.transition = 'none'; im.style.opacity = '0'
+      const show = () => { fit(); requestAnimationFrame(() => { im.style.transition = 'opacity .16s ease'; im.style.opacity = '1' }) }
+      im.onload = show; im.src = it.img
+      if (im.complete && im.naturalWidth) show()
+    }
+    setStamp()
+  }, [idx, it])
   useEffect(() => { setStamp() })
 
   const zoom = f => { tf.current.sc = Math.min(10, Math.max(.1, tf.current.sc * f)); apply() }
@@ -754,7 +766,8 @@ function ReviewMode({ items, marks, setReview, mark, rotate, Fields, exportXlsx,
     if (silent) { next(); return }
     const el = toastRef.current; el.textContent = st === 'ver' ? '✓' : '⚑'; el.style.color = st === 'ver' ? '#22c55e' : '#f59e0b'
     el.style.opacity = 1; el.style.transform = 'translate(-50%,-50%) scale(1)'
-    setTimeout(() => { el.style.opacity = 0; el.style.transform = 'translate(-50%,-50%) scale(.5)'; next() }, 380)
+    setTimeout(() => { el.style.opacity = 0 }, 180)
+    setTimeout(next, 160)
   }
 
   /* gestos: pinch (2 dedos) = zoom · 1 dedo = swipe (modo Tinder) o paneo */
@@ -879,7 +892,7 @@ function ReviewMode({ items, marks, setReview, mark, rotate, Fields, exportXlsx,
             <CtrlBtn d={I.fit} onClick={fit} />
           </div>
           <div className="absolute left-3 bottom-3 text-[11px] text-slate-400 bg-slate-900/70 rounded-md px-2 py-1 pointer-events-none">{swipeMode ? 'Desliza ▶ verificar · ◀ a revisar · 2 dedos = zoom' : 'Valida con los botones · 2 dedos = zoom'}</div>
-          <div ref={toastRef} className="absolute left-1/2 top-1/2 text-[120px] leading-none pointer-events-none z-30" style={{ opacity: 0, transform: 'translate(-50%,-50%) scale(.5)', transition: 'all .2s' }} />
+          <div ref={toastRef} className="absolute left-1/2 top-1/2 text-[72px] leading-none pointer-events-none z-30 drop-shadow-lg" style={{ opacity: 0, transform: 'translate(-50%,-50%)', transition: 'opacity .15s' }} />
         </div>
 
         {/* panel datos: lateral en desktop */}
