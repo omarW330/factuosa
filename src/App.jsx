@@ -21,9 +21,13 @@ const cuadraOf = (it, m) => Math.abs((Nv(it, m, 'base') + Nv(it, m, 'iva')) - Nv
 const lsGet = (k, fb) => { try { return JSON.parse(localStorage.getItem(k) || '') ?? fb } catch (e) { return fb } }
 const lsSet = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)) } catch (e) {} }
 const lsDel = k => { try { localStorage.removeItem(k) } catch (e) {} }
-const revKey = fecha => 'agm_rev_' + fecha
-const metaKey = fecha => 'agm_meta_' + fecha
-const HIDDEN_KEY = 'agm_hidden'
+
+/* ---------- tema (claro/oscuro) y usuarios recordados ---------- */
+const getTheme = () => { try { return localStorage.getItem('agm_theme') || (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light') } catch (e) { return 'light' } }
+const applyTheme = t => { try { document.documentElement.classList.toggle('dark', t === 'dark'); localStorage.setItem('agm_theme', t) } catch (e) {} }
+const getUsers = () => { try { return JSON.parse(localStorage.getItem('agm_users') || '[]') } catch (e) { return [] } }
+const rememberUser = u => { try { const n = String(u).toLowerCase().trim(); if (!n) return; const next = [n, ...getUsers().filter(x => x !== n)].slice(0, 5); localStorage.setItem('agm_users', JSON.stringify(next)) } catch (e) {} }
+const cheer = name => { const m = name ? [`¡Bien hecho, ${name}!`, `¡Genial, ${name}!`, `¡Crack, ${name}!`, `¡Vas que vuelas, ${name}!`] : ['¡Bien hecho!']; return m[Math.floor(Date.now() / 1000) % m.length] }
 
 /* ---------- iconos SVG (sin dependencias) ---------- */
 const I = {
@@ -53,32 +57,64 @@ const I = {
   lock: <><rect x="3" y="11" width="18" height="11" rx="2" /><path d="M7 11V7a5 5 0 0 1 10 0v4" /></>,
   clock: <><circle cx="12" cy="12" r="9" /><path d="M12 7v5l3 2" /></>,
   upload: <><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" /><path d="M7 9l5-5 5 5" /><path d="M12 4v12" /></>,
+  sun: <><circle cx="12" cy="12" r="4" /><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4" /></>,
+  moon: <path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z" />,
+  spark: <path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8z" />,
+}
+
+function ThemeToggle({ theme, onToggle, className = '' }) {
+  return (
+    <button onClick={onToggle} title={theme === 'dark' ? 'Modo claro' : 'Modo oscuro'}
+      className={'grid place-items-center w-9 h-9 rounded-xl border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition ' + className}>
+      <Icon d={theme === 'dark' ? I.sun : I.moon} className="w-[18px] h-[18px]" />
+    </button>
+  )
 }
 
 /* ===================== LOGIN (Fase B) ===================== */
-function Login() {
-  const [u, setU] = useState('')
+function Login({ theme, onToggleTheme }) {
+  const recientes = getUsers()
+  const [u, setU] = useState(recientes[0] || '')
   const [p, setP] = useState('')
   const [err, setErr] = useState('')
   const [busy, setBusy] = useState(false)
+  const pwRef = useRef(null)
+  const pick = name => { setU(name); setErr(''); if (pwRef.current) pwRef.current.focus() }
   const submit = async e => {
     e.preventDefault(); setErr(''); setBusy(true)
     const { error } = await signIn(u, p)
     setBusy(false)
     if (error) setErr('Usuario o contraseña incorrectos')
+    else rememberUser(u)
   }
+  const inp = 'w-full rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 dark:text-slate-100 px-3 py-2.5 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-200 dark:focus:ring-indigo-500/30 outline-none'
   return (
     <div className="min-h-full grid place-items-center px-4">
-      <form onSubmit={submit} className="w-full max-w-sm rounded-3xl bg-white border border-slate-200 shadow-xl p-7 card-in">
-        <div className="grid place-items-center w-12 h-12 rounded-2xl bg-indigo-600 text-white shadow-lg shadow-indigo-600/30 mb-4"><Icon d={I.lock} /></div>
-        <h1 className="text-xl font-bold text-slate-900">Revisión de facturas AGM</h1>
-        <p className="text-[13px] text-slate-500 mt-0.5 mb-5">Acceso restringido</p>
-        <label className="block text-[13px] font-medium text-slate-600 mb-1">Usuario</label>
-        <input autoFocus value={u} onChange={e => setU(e.target.value)} autoCapitalize="none" autoCorrect="off" className="w-full rounded-xl border border-slate-300 px-3 py-2.5 mb-3 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-200 outline-none" />
-        <label className="block text-[13px] font-medium text-slate-600 mb-1">Contraseña</label>
-        <input type="password" value={p} onChange={e => setP(e.target.value)} className="w-full rounded-xl border border-slate-300 px-3 py-2.5 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-200 outline-none" />
-        {err && <p className="text-[13px] text-rose-600 mt-3">{err}</p>}
-        <button type="submit" disabled={busy || !u || !p} className="mt-5 w-full py-3 rounded-xl bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white font-semibold transition">{busy ? 'Entrando…' : 'Entrar'}</button>
+      <form onSubmit={submit} className="w-full max-w-sm rounded-3xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-xl p-7 card-in">
+        <div className="flex items-start justify-between mb-4">
+          <div className="grid place-items-center w-12 h-12 rounded-2xl brand-grad text-white shadow-lg shadow-indigo-600/30"><Icon d={I.lock} /></div>
+          <ThemeToggle theme={theme} onToggle={onToggleTheme} />
+        </div>
+        <h1 className="text-xl font-bold text-slate-900 dark:text-slate-100 dark:text-slate-100">Revisión de facturas <span className="brand-text">AGM</span></h1>
+        <p className="text-[13px] text-slate-500 dark:text-slate-400 dark:text-slate-400 mt-0.5 mb-5">Acceso restringido</p>
+
+        {recientes.length > 0 && (
+          <div className="flex flex-wrap gap-1.5 mb-4">
+            {recientes.map(n => (
+              <button key={n} type="button" onClick={() => pick(n)}
+                className={'flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[13px] font-medium transition ' + (u === n ? 'bg-indigo-600 text-white' : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700')}>
+                <span className="grid place-items-center w-5 h-5 rounded-full bg-white/20"><Icon d={I.user} className="w-3 h-3" /></span>{n}
+              </button>
+            ))}
+          </div>
+        )}
+
+        <label className="block text-[13px] font-medium text-slate-600 dark:text-slate-300 dark:text-slate-300 mb-1">Usuario</label>
+        <input autoFocus={!recientes.length} value={u} onChange={e => setU(e.target.value)} autoCapitalize="none" autoCorrect="off" className={inp + ' mb-3'} />
+        <label className="block text-[13px] font-medium text-slate-600 dark:text-slate-300 dark:text-slate-300 mb-1">Contraseña</label>
+        <input ref={pwRef} type="password" autoFocus={recientes.length > 0} value={p} onChange={e => setP(e.target.value)} className={inp} />
+        {err && <p className="text-[13px] text-rose-600 dark:text-rose-400 mt-3">{err}</p>}
+        <button type="submit" disabled={busy || !u || !p} className="mt-5 w-full py-3 rounded-xl brand-grad hover:opacity-90 disabled:opacity-50 text-white font-semibold transition">{busy ? 'Entrando…' : 'Entrar'}</button>
       </form>
     </div>
   )
@@ -115,8 +151,13 @@ export default function App() {
   const [sync, setSync] = useState(syncEnabled ? 'idle' : 'off') // 'off'|'idle'|'saving'|'saved'|'error'
   const [session, setSession] = useState(null)
   const [authReady, setAuthReady] = useState(!syncEnabled)
+  const [theme, setTheme] = useState(getTheme)
   const cacheKeyRef = useRef('')
   const saveTimers = useRef({})
+
+  const toggleTheme = () => setTheme(t => { const n = t === 'dark' ? 'light' : 'dark'; applyTheme(n); return n })
+  useEffect(() => { applyTheme(theme) }, [])
+  const userName = userLabel(session) || ''
 
   /* sesión (login usuario+contraseña) */
   useEffect(() => {
@@ -183,11 +224,11 @@ export default function App() {
     const cuadra = cuadraOf(it, marks)
     const s = marks[it.id] || {}
     const Row = ({ label, children }) => (
-      <div className="flex items-center justify-between gap-3 py-1.5 border-b border-dashed border-slate-200/70">
-        <span className="text-[13px] text-slate-500 whitespace-nowrap">{label}</span>{children}
+      <div className="flex items-center justify-between gap-3 py-1.5 border-b border-dashed border-slate-200/70 dark:border-slate-700/50">
+        <span className="text-[13px] text-slate-500 dark:text-slate-400 whitespace-nowrap">{label}</span>{children}
       </div>
     )
-    const inp = 'rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-sm text-slate-900 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-200 outline-none transition'
+    const inp = 'rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 px-2.5 py-1.5 text-sm text-slate-900 dark:text-slate-100 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-200 dark:focus:ring-indigo-500/30 outline-none transition'
     return (
       <div className={compact ? '' : 'space-y-0.5'}>
         <div className="flex flex-wrap items-center gap-1.5 mb-2.5">
@@ -204,7 +245,7 @@ export default function App() {
         <Row label={'IVA/IPSI · ' + (it.timp || '')}><input inputMode="decimal" className={inp + ' w-28 text-right tabular-nums'} value={Nv(it, marks, 'iva').toFixed(2)} onChange={e => setField(it.id, 'iva', e.target.value, true)} /></Row>
         <Row label="Total"><input inputMode="decimal" className={inp + ' w-28 text-right tabular-nums font-semibold'} value={Nv(it, marks, 'total').toFixed(2)} onChange={e => setField(it.id, 'total', e.target.value, true)} /></Row>
         <div className="pt-2">
-          <span className="text-[13px] text-slate-500">Observaciones</span>
+          <span className="text-[13px] text-slate-500 dark:text-slate-400">Observaciones</span>
           <textarea className={inp + ' w-full mt-1 min-h-[44px] resize-y'} value={F(it, marks, 'obs') || ''} onChange={e => setField(it.id, 'obs', e.target.value, false)} />
         </div>
       </div>
@@ -217,24 +258,25 @@ export default function App() {
     return { fecha: F(it, marks, 'fecha'), proveedor: F(it, marks, 'proveedor'), num: F(it, marks, 'num'), base: Nv(it, marks, 'base'), iva: Nv(it, marks, 'iva'), total: Nv(it, marks, 'total'), estado: st, obs: F(it, marks, 'obs'), amber: s?.status === 'rev' || it.flag }
   })
   const exportXlsx = () => { const blob = buildXlsx(approvedRows()); const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = (sel?.empresa || 'AGM') + '_revisado.xlsx'; a.click(); URL.revokeObjectURL(a.href) }
-  const copyTable = async () => { try { await navigator.clipboard.writeText(tsvTable(approvedRows())); alert('Tabla copiada. Pégala en Excel.') } catch (e) { alert('No se pudo copiar automáticamente.') } }
+  const copyTable = async () => { try { await navigator.clipboard.writeText(tsvTable(approvedRows())); alert(`${cheer(userName)} Tabla copiada, pégala en Excel.`) } catch (e) { alert('No se pudo copiar automáticamente.') } }
 
   if (syncEnabled && !authReady) return <div className="min-h-full grid place-items-center text-slate-400">Cargando…</div>
-  if (syncEnabled && !session) return <Login />
+  if (syncEnabled && !session) return <Login theme={theme} onToggleTheme={toggleTheme} />
 
   return (
     <div className="min-h-full">
       {view === 'dashboard' &&
-        <Dashboard jobs={jobs} stats={stats} heartbeat={heartbeat} sync={sync} session={session}
+        <Dashboard jobs={jobs} stats={stats} heartbeat={heartbeat} sync={sync} session={session} userName={userName}
+          theme={theme} onToggleTheme={toggleTheme}
           onOpen={openJob} onDelete={setConfirm} onStats={() => setView('stats')} onUpload={() => setUpload(true)} />}
       {view === 'stats' &&
         <StatsView onBack={() => setView('dashboard')} />}
       {view === 'list' &&
-        <ListView sel={sel} items={items} marks={marks} Fields={Fields} mark={mark} reset={reset} rotate={rotate} sync={sync}
+        <ListView sel={sel} items={items} marks={marks} Fields={Fields} mark={mark} reset={reset} rotate={rotate} sync={sync} userName={userName}
           exportXlsx={exportXlsx} copyTable={copyTable} setField={setField} update={update}
           onBack={() => { setView('dashboard'); refresh() }} onDelete={() => setConfirm(sel)} />}
 
-      {upload && <UploadModal empresas={empresas} onClose={() => setUpload(false)} onDone={() => { setUpload(false); refresh() }} />}
+      {upload && <UploadModal empresas={empresas} userName={userName} onClose={() => setUpload(false)} onDone={() => { setUpload(false); refresh() }} />}
       {confirm && <ConfirmDelete job={confirm} onCancel={() => setConfirm(null)} onConfirm={() => removeJob(confirm)} />}
     </div>
   )
@@ -242,7 +284,7 @@ export default function App() {
 
 /* ===================== PANEL (dashboard) ===================== */
 const ESTADO = {
-  en_cola:    { l: 'En cola',    c: 'bg-slate-100 text-slate-600' },
+  en_cola:    { l: 'En cola',    c: 'bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300' },
   procesando: { l: 'Procesando', c: 'bg-indigo-100 text-indigo-700' },
   listo:      { l: 'Listo',      c: 'bg-emerald-100 text-emerald-700' },
   error:      { l: 'Error',      c: 'bg-rose-100 text-rose-700' },
@@ -266,11 +308,11 @@ function StatusBar({ heartbeat }) {
   const sinceMin = last != null ? Math.round((now - last) / 60000) : null
   const paused = last != null && sinceMin > intMin * 2 + 8
   return (
-    <div className="rounded-2xl bg-white border border-slate-200 p-4 shadow-sm flex items-center gap-3">
-      <div className={'grid place-items-center w-10 h-10 rounded-xl ' + (heartbeat.procesando ? 'bg-indigo-100 text-indigo-600' : 'bg-slate-100 text-slate-500')}><Icon d={I.clock} /></div>
+    <div className="rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-4 shadow-sm flex items-center gap-3">
+      <div className={'grid place-items-center w-10 h-10 rounded-xl ' + (heartbeat.procesando ? 'bg-indigo-100 text-indigo-600' : 'bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400')}><Icon d={I.clock} /></div>
       <div className="min-w-0">
-        <div className="text-sm font-semibold text-slate-700">Automática (IA){heartbeat.procesando ? ' · procesando…' : ''}</div>
-        <div className="text-[12px] text-slate-500">
+        <div className="text-sm font-semibold text-slate-700 dark:text-slate-200">Automática (IA){heartbeat.procesando ? ' · procesando…' : ''}</div>
+        <div className="text-[12px] text-slate-500 dark:text-slate-400">
           {last == null ? 'aún no se ha ejecutado'
             : nextMin > 0 ? `próxima ejecución en ~${nextMin} min` : 'ejecución inminente'}
           {last != null && <> · última {sinceMin <= 0 ? 'hace un momento' : 'hace ' + sinceMin + ' min'}</>}
@@ -281,24 +323,35 @@ function StatusBar({ heartbeat }) {
   )
 }
 
-function Dashboard({ jobs, stats, heartbeat, sync, session, onOpen, onDelete, onStats, onUpload }) {
+function Dashboard({ jobs, stats, heartbeat, sync, session, userName, theme, onToggleTheme, onOpen, onDelete, onStats, onUpload }) {
   const g = Object.values(stats).reduce((a, s) => ({ n: a.n + s.n, ver: a.ver + s.ver, rev: a.rev + s.rev }), { n: 0, ver: 0, rev: 0 })
   g.pend = Math.max(0, g.n - g.ver - g.rev)
   const pct = g.n ? Math.round((g.ver / g.n) * 100) : 0
+  const hora = new Date().getHours()
+  const saludo = hora < 6 ? 'Buenas noches' : hora < 13 ? 'Buenos días' : hora < 21 ? 'Buenas tardes' : 'Buenas noches'
   return (
     <div className="mx-auto max-w-5xl px-4 pb-16">
       <header className="safe-t pt-7 pb-5">
         <div className="flex items-center gap-2.5">
-          <div className="grid place-items-center w-10 h-10 rounded-xl bg-indigo-600 text-white shadow-lg shadow-indigo-600/30"><Icon d={I.doc} /></div>
-          <div>
-            <h1 className="text-xl font-bold tracking-tight text-slate-900">Revisión de facturas <span className="text-indigo-600">AGM</span></h1>
-            <p className="text-[13px] text-slate-500">{jobs.length} {jobs.length === 1 ? 'lote' : 'lotes'}</p>
+          <div className="grid place-items-center w-10 h-10 rounded-xl brand-grad text-white shadow-lg shadow-indigo-600/30"><Icon d={I.doc} /></div>
+          <div className="min-w-0">
+            <h1 className="text-xl font-bold tracking-tight text-slate-900 dark:text-slate-100 dark:text-slate-100">Revisión de facturas <span className="brand-text">AGM</span></h1>
+            <p className="text-[13px] text-slate-500 dark:text-slate-400">{jobs.length} {jobs.length === 1 ? 'lote' : 'lotes'}</p>
           </div>
-          <div className="ml-auto self-start flex flex-col items-end gap-1.5">
-            <SyncBadge sync={sync} />
-            {session && <button onClick={signOut} className="flex items-center gap-1.5 text-[12px] text-slate-500 hover:text-rose-600 transition" title="Cerrar sesión"><Icon d={I.user} className="w-3.5 h-3.5" /> {userLabel(session)} <Icon d={I.logout} className="w-3.5 h-3.5" /></button>}
+          <div className="ml-auto self-start flex items-center gap-2">
+            <ThemeToggle theme={theme} onToggle={onToggleTheme} />
+            <div className="flex flex-col items-end gap-1.5">
+              <SyncBadge sync={sync} />
+              {session && <button onClick={signOut} className="flex items-center gap-1.5 text-[12px] text-slate-500 dark:text-slate-400 hover:text-rose-600 transition" title="Cerrar sesión"><Icon d={I.user} className="w-3.5 h-3.5" /> {userName} <Icon d={I.logout} className="w-3.5 h-3.5" /></button>}
+            </div>
           </div>
         </div>
+        {userName && (
+          <div className="mt-4 flex items-center gap-2">
+            <span className="text-2xl">👋</span>
+            <h2 className="text-lg font-semibold text-slate-800 dark:text-slate-100">{saludo}, <span className="brand-text capitalize">{userName}</span></h2>
+          </div>
+        )}
       </header>
 
       <div className="mb-3"><StatusBar heartbeat={heartbeat} /></div>
@@ -311,24 +364,24 @@ function Dashboard({ jobs, stats, heartbeat, sync, session, onOpen, onDelete, on
       </div>
 
       {g.n > 0 && (
-        <div className="mt-4 rounded-2xl bg-white border border-slate-200 p-4 shadow-sm">
+        <div className="mt-4 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-4 shadow-sm">
           <div className="flex items-center justify-between text-sm mb-2">
-            <span className="font-semibold text-slate-700">Progreso global</span>
-            <span className="text-slate-500">{g.ver}/{g.n} · <b className="text-emerald-600">{pct}%</b></span>
+            <span className="font-semibold text-slate-700 dark:text-slate-200">Progreso global</span>
+            <span className="text-slate-500 dark:text-slate-400">{g.ver}/{g.n} · <b className="text-emerald-600">{pct}%</b></span>
           </div>
-          <div className="h-2.5 rounded-full bg-slate-100 overflow-hidden"><div className="h-full bg-gradient-to-r from-emerald-400 to-emerald-600 transition-all" style={{ width: pct + '%' }} /></div>
+          <div className="h-2.5 rounded-full bg-slate-100 dark:bg-slate-800 overflow-hidden"><div className="h-full bg-gradient-to-r from-emerald-400 to-emerald-600 transition-all" style={{ width: pct + '%' }} /></div>
         </div>
       )}
 
       <div className="mt-8 mb-3 flex items-center justify-between gap-2">
         <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-400">Lotes</h2>
         <div className="flex items-center gap-2">
-          <button onClick={onStats} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-slate-200 bg-white text-sm font-semibold text-slate-700 hover:border-indigo-300 hover:text-indigo-600 transition"><Icon d={I.chart} className="w-4 h-4" /> <span className="hidden sm:inline">Estadísticas</span></button>
-          <button onClick={onUpload} className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg bg-indigo-600 text-white text-sm font-semibold shadow shadow-indigo-600/30 hover:bg-indigo-700 transition"><Icon d={I.upload} className="w-4 h-4" /> Subir facturas</button>
+          <button onClick={onStats} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-sm font-semibold text-slate-700 dark:text-slate-200 hover:border-indigo-300 hover:text-indigo-600 transition"><Icon d={I.chart} className="w-4 h-4" /> <span className="hidden sm:inline">Estadísticas</span></button>
+          <button onClick={onUpload} className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg brand-grad text-white text-sm font-semibold shadow shadow-indigo-600/30 hover:opacity-90 transition"><Icon d={I.upload} className="w-4 h-4" /> Subir facturas</button>
         </div>
       </div>
       {jobs.length === 0
-        ? <div className="rounded-2xl border border-dashed border-slate-300 bg-white/60 p-10 text-center text-slate-500">No hay lotes todavía. Pulsa <b>Subir facturas</b> para crear el primero.</div>
+        ? <div className="rounded-2xl border border-dashed border-slate-300 dark:border-slate-700 bg-white/60 dark:bg-slate-900/50 p-10 text-center text-slate-500 dark:text-slate-400">No hay lotes todavía. Pulsa <b>Subir facturas</b> para crear el primero.</div>
         : <div className="grid sm:grid-cols-2 gap-3">
             {jobs.map(j => <JobCard key={j.id} job={j} s={stats[j.id]} onOpen={() => onOpen(j)} onDelete={() => onDelete(j)} />)}
           </div>}
@@ -337,11 +390,11 @@ function Dashboard({ jobs, stats, heartbeat, sync, session, onOpen, onDelete, on
 }
 
 const Kpi = ({ n, label, tone }) => {
-  const tones = { slate: 'text-slate-900', emerald: 'text-emerald-600', amber: 'text-amber-600', indigo: 'text-indigo-600' }
+  const tones = { slate: 'text-slate-900 dark:text-slate-100', emerald: 'text-emerald-600', amber: 'text-amber-600', indigo: 'text-indigo-600' }
   return (
-    <div className="rounded-2xl bg-white border border-slate-200 p-4 shadow-sm">
-      <div className={'text-3xl font-extrabold tabular-nums ' + tones[tone]}>{n}</div>
-      <div className="text-[13px] text-slate-500 mt-0.5">{label}</div>
+    <div className="rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-4 shadow-sm">
+      <div className={'text-3xl font-extrabold tabular-nums dark:brightness-110' + tones[tone]}>{n}</div>
+      <div className="text-[13px] text-slate-500 dark:text-slate-400 mt-0.5">{label}</div>
     </div>
   )
 }
@@ -354,12 +407,12 @@ function JobCard({ job, s, onOpen, onDelete }) {
   const pct = n ? Math.round((ver / n) * 100) : 0
   const done = n > 0 && ver === n
   return (
-    <div className="group rounded-2xl bg-white border border-slate-200 shadow-sm hover:shadow-md hover:border-indigo-300 transition overflow-hidden">
+    <div className="group rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm hover:shadow-md hover:border-indigo-300 transition overflow-hidden">
       <button onClick={onOpen} className="w-full text-left p-4">
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">
             <div className="flex items-center gap-2 flex-wrap">
-              <span className="font-bold text-slate-900">{job.empresa || '—'}</span>
+              <span className="font-bold text-slate-900 dark:text-slate-100">{job.empresa || '—'}</span>
               <span className={'px-1.5 py-0.5 rounded text-[10px] font-bold ' + est.c}>{est.l.toUpperCase()}</span>
               {done && <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-emerald-100 text-emerald-700">COMPLETA</span>}
             </div>
@@ -369,30 +422,31 @@ function JobCard({ job, s, onOpen, onDelete }) {
         </div>
         {job.estado === 'listo'
           ? <>
-              <div className="mt-3 h-2 rounded-full bg-slate-100 overflow-hidden"><div className="h-full bg-emerald-500 transition-all" style={{ width: pct + '%' }} /></div>
+              <div className="mt-3 h-2 rounded-full bg-slate-100 dark:bg-slate-800 overflow-hidden"><div className="h-full bg-emerald-500 transition-all" style={{ width: pct + '%' }} /></div>
               <div className="mt-2.5 flex flex-wrap gap-x-4 gap-y-1 text-[12px]">
                 <span className="text-emerald-600 font-semibold">{ver} verif.</span>
                 <span className="text-amber-600 font-semibold">{rev} a revisar</span>
-                <span className="text-slate-500 font-semibold">{pend} pend.</span>
+                <span className="text-slate-500 dark:text-slate-400 font-semibold">{pend} pend.</span>
                 <span className="ml-auto text-slate-400">{pct}%</span>
               </div>
             </>
           : <div className="mt-3 text-[12px] text-slate-400">{job.estado === 'error' ? 'Error al procesar' : 'Esperando a la automática…'}</div>}
       </button>
-      <div className="flex border-t border-slate-100">
-        <button onClick={onOpen} className="flex-1 py-2.5 text-sm font-semibold text-indigo-600 hover:bg-indigo-50 transition">Abrir</button>
-        <div className="w-px bg-slate-100" />
+      <div className="flex border-t border-slate-100 dark:border-slate-800">
+        <button onClick={onOpen} className="flex-1 py-2.5 text-sm font-semibold text-indigo-600 dark:text-indigo-400 hover:bg-indigo-50 dark:hover:bg-indigo-500/10 transition">Abrir</button>
+        <div className="w-px bg-slate-100 dark:bg-slate-800" />
         <button onClick={onDelete} className="px-4 py-2.5 text-sm font-semibold text-rose-500 hover:bg-rose-50 transition flex items-center gap-1.5"><Icon d={I.trash} className="w-4 h-4" /> Eliminar</button>
       </div>
     </div>
   )
 }
 
-function UploadModal({ empresas, onClose, onDone }) {
+function UploadModal({ empresas, userName, onClose, onDone }) {
   const [emp, setEmp] = useState('')
   const [files, setFiles] = useState([])
   const [busy, setBusy] = useState(false)
   const [prog, setProg] = useState([0, 0])
+  const [done, setDone] = useState(false)
   useEffect(() => { if (!emp && empresas.length) setEmp(empresas[0].id) }, [empresas])
   const submit = async () => {
     if (!emp || !files.length) return
@@ -400,31 +454,40 @@ function UploadModal({ empresas, onClose, onDone }) {
     const job = await createJob({ empresa: emp, n_facturas: files.length, estado: 'en_cola' })
     if (!job) { setBusy(false); alert('No se pudo crear el lote.'); return }
     await uploadFiles(emp, job.id, files, (d, t) => setProg([d, t]))
-    setBusy(false); onDone()
+    setBusy(false); setDone(true)
   }
   return (
-    <div className="fixed inset-0 z-[60] bg-slate-950/60 flex items-center justify-center p-5" onClick={busy ? undefined : onClose}>
-      <div className="w-full max-w-md rounded-3xl bg-white p-6 card-in" onClick={e => e.stopPropagation()}>
-        <div className="grid place-items-center w-12 h-12 rounded-2xl bg-indigo-100 text-indigo-600 mb-3"><Icon d={I.upload} /></div>
-        <h2 className="text-lg font-bold text-slate-900">Subir conjunto de facturas</h2>
-        <p className="text-sm text-slate-500 mt-1">Se suben las imágenes/PDF y la IA las procesará en la próxima ejecución.</p>
+    <div className="fixed inset-0 z-[60] bg-slate-950/60 flex items-center justify-center p-5" onClick={busy ? undefined : (done ? onDone : onClose)}>
+      <div className="w-full max-w-md rounded-3xl bg-white dark:bg-slate-900 p-6 card-in" onClick={e => e.stopPropagation()}>
+        {done ? (
+          <div className="text-center py-3">
+            <div className="text-5xl mb-2">🚀</div>
+            <h2 className="text-lg font-bold text-slate-900 dark:text-slate-100 dark:text-slate-100">{cheer(userName)}</h2>
+            <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">{files.length} factura(s) subida(s). La IA las procesará en breve y te avisaremos cuando estén listas. ¡A por la siguiente! 💪</p>
+            <button onClick={onDone} className="mt-5 w-full py-3 rounded-xl brand-grad hover:opacity-90 text-white font-semibold transition">Hecho</button>
+          </div>
+        ) : (<>
+          <div className="grid place-items-center w-12 h-12 rounded-2xl bg-indigo-100 dark:bg-indigo-500/20 text-indigo-600 dark:text-indigo-300 mb-3"><Icon d={I.upload} /></div>
+          <h2 className="text-lg font-bold text-slate-900 dark:text-slate-100 dark:text-slate-100">Subir conjunto de facturas</h2>
+          <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">Se suben las imágenes/PDF y la IA las procesará en la próxima ejecución.</p>
 
-        <label className="block text-[13px] font-medium text-slate-600 mt-4 mb-1">Empresa</label>
-        <select value={emp} onChange={e => setEmp(e.target.value)} className="w-full rounded-xl border border-slate-300 px-3 py-2.5 bg-white focus:border-indigo-500 focus:ring-2 focus:ring-indigo-200 outline-none">
-          {empresas.length === 0 && <option value="">(sin empresas)</option>}
-          {empresas.map(e => <option key={e.id} value={e.id}>{e.nombre || e.id}</option>)}
-        </select>
+          <label className="block text-[13px] font-medium text-slate-600 dark:text-slate-300 dark:text-slate-300 mt-4 mb-1">Empresa</label>
+          <select value={emp} onChange={e => setEmp(e.target.value)} className="w-full rounded-xl border border-slate-300 dark:border-slate-700 px-3 py-2.5 bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 dark:text-slate-100 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-200 outline-none">
+            {empresas.length === 0 && <option value="">(sin empresas)</option>}
+            {empresas.map(e => <option key={e.id} value={e.id}>{e.nombre || e.id}</option>)}
+          </select>
 
-        <label className="block text-[13px] font-medium text-slate-600 mt-4 mb-1">Ficheros</label>
-        <input type="file" multiple accept="image/*,application/pdf" onChange={e => setFiles([...e.target.files])} className="w-full text-sm text-slate-600 file:mr-3 file:py-2 file:px-3 file:rounded-lg file:border-0 file:bg-indigo-50 file:text-indigo-700 file:font-semibold" />
-        {files.length > 0 && <p className="text-[12px] text-slate-500 mt-1.5">{files.length} fichero(s) seleccionado(s)</p>}
+          <label className="block text-[13px] font-medium text-slate-600 dark:text-slate-300 dark:text-slate-300 mt-4 mb-1">Ficheros</label>
+          <input type="file" multiple accept="image/*,application/pdf" onChange={e => setFiles([...e.target.files])} className="w-full text-sm text-slate-600 dark:text-slate-300 dark:text-slate-300 file:mr-3 file:py-2 file:px-3 file:rounded-lg file:border-0 file:bg-indigo-50 dark:file:bg-indigo-500/20 file:text-indigo-700 dark:file:text-indigo-300 file:font-semibold" />
+          {files.length > 0 && <p className="text-[12px] text-slate-500 dark:text-slate-400 mt-1.5">{files.length} fichero(s) seleccionado(s)</p>}
 
-        {busy && <div className="mt-4"><div className="h-2 rounded-full bg-slate-100 overflow-hidden"><div className="h-full bg-indigo-500 transition-all" style={{ width: (prog[1] ? (prog[0] / prog[1]) * 100 : 0) + '%' }} /></div><p className="text-[12px] text-slate-500 mt-1">Subiendo {prog[0]}/{prog[1]}…</p></div>}
+          {busy && <div className="mt-4"><div className="h-2 rounded-full bg-slate-100 dark:bg-slate-800 overflow-hidden"><div className="h-full bg-indigo-500 transition-all" style={{ width: (prog[1] ? (prog[0] / prog[1]) * 100 : 0) + '%' }} /></div><p className="text-[12px] text-slate-500 dark:text-slate-400 mt-1">Subiendo {prog[0]}/{prog[1]}…</p></div>}
 
-        <div className="flex gap-2 mt-5">
-          <button onClick={onClose} disabled={busy} className="flex-1 py-3 rounded-xl bg-slate-100 hover:bg-slate-200 font-semibold text-slate-700 disabled:opacity-50">Cancelar</button>
-          <button onClick={submit} disabled={busy || !emp || !files.length} className="flex-1 py-3 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-semibold disabled:opacity-50">{busy ? 'Subiendo…' : 'Subir'}</button>
-        </div>
+          <div className="flex gap-2 mt-5">
+            <button onClick={onClose} disabled={busy} className="flex-1 py-3 rounded-xl bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 font-semibold text-slate-700 dark:text-slate-200 dark:text-slate-200 disabled:opacity-50">Cancelar</button>
+            <button onClick={submit} disabled={busy || !emp || !files.length} className="flex-1 py-3 rounded-xl brand-grad hover:opacity-90 text-white font-semibold disabled:opacity-50">{busy ? 'Subiendo…' : 'Subir'}</button>
+          </div>
+        </>)}
       </div>
     </div>
   )
@@ -474,10 +537,10 @@ function StatsView({ onBack }) {
   return (
     <div className="mx-auto max-w-5xl px-4 pb-16">
       <header className="safe-t pt-6 pb-5 flex items-center gap-3">
-        <button onClick={onBack} className="grid place-items-center w-9 h-9 rounded-lg hover:bg-slate-100 text-slate-600 transition"><Icon d={I.back} /></button>
+        <button onClick={onBack} className="grid place-items-center w-9 h-9 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-600 dark:text-slate-300 transition"><Icon d={I.back} /></button>
         <div>
-          <h1 className="text-xl font-bold tracking-tight text-slate-900">Estadísticas</h1>
-          <p className="text-[13px] text-slate-500">Sobre todas las tandas</p>
+          <h1 className="text-xl font-bold tracking-tight text-slate-900 dark:text-slate-100">Estadísticas</h1>
+          <p className="text-[13px] text-slate-500 dark:text-slate-400">Sobre todas las tandas</p>
         </div>
       </header>
 
@@ -501,12 +564,12 @@ function StatsView({ onBack }) {
 
           {/* por mes */}
           <h2 className="mt-8 mb-3 text-sm font-semibold uppercase tracking-wide text-slate-400">Por mes</h2>
-          <div className="rounded-2xl bg-white border border-slate-200 p-4 shadow-sm space-y-2.5">
+          <div className="rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-4 shadow-sm space-y-2.5">
             {st.byMes.map(m => (
               <div key={m.k} className="flex items-center gap-3">
-                <span className="w-16 shrink-0 text-[13px] text-slate-500">{mesLabel(m.k)}</span>
-                <div className="flex-1 h-5 rounded-md bg-slate-100 overflow-hidden"><div className="h-full bg-gradient-to-r from-indigo-400 to-indigo-600 rounded-md" style={{ width: Math.max(3, (m.total / maxMes) * 100) + '%' }} /></div>
-                <span className="w-24 shrink-0 text-right text-[13px] font-semibold tabular-nums text-slate-700">{eur(m.total)}</span>
+                <span className="w-16 shrink-0 text-[13px] text-slate-500 dark:text-slate-400">{mesLabel(m.k)}</span>
+                <div className="flex-1 h-5 rounded-md bg-slate-100 dark:bg-slate-800 overflow-hidden"><div className="h-full bg-gradient-to-r from-indigo-400 to-indigo-600 rounded-md" style={{ width: Math.max(3, (m.total / maxMes) * 100) + '%' }} /></div>
+                <span className="w-24 shrink-0 text-right text-[13px] font-semibold tabular-nums text-slate-700 dark:text-slate-200">{eur(m.total)}</span>
                 <span className="w-8 shrink-0 text-right text-[12px] text-slate-400">{m.n}</span>
               </div>
             ))}
@@ -514,12 +577,12 @@ function StatsView({ onBack }) {
 
           {/* top proveedores */}
           <h2 className="mt-8 mb-3 text-sm font-semibold uppercase tracking-wide text-slate-400">Top proveedores</h2>
-          <div className="rounded-2xl bg-white border border-slate-200 p-4 shadow-sm space-y-2.5">
+          <div className="rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-4 shadow-sm space-y-2.5">
             {st.topProv.map(p => (
               <div key={p.k} className="flex items-center gap-3">
-                <span className="w-40 shrink-0 text-[13px] text-slate-600 truncate" title={p.k}>{p.k}</span>
-                <div className="flex-1 h-5 rounded-md bg-slate-100 overflow-hidden"><div className="h-full bg-gradient-to-r from-emerald-400 to-emerald-600 rounded-md" style={{ width: Math.max(3, (p.total / maxProv) * 100) + '%' }} /></div>
-                <span className="w-24 shrink-0 text-right text-[13px] font-semibold tabular-nums text-slate-700">{eur(p.total)}</span>
+                <span className="w-40 shrink-0 text-[13px] text-slate-600 dark:text-slate-300 truncate" title={p.k}>{p.k}</span>
+                <div className="flex-1 h-5 rounded-md bg-slate-100 dark:bg-slate-800 overflow-hidden"><div className="h-full bg-gradient-to-r from-emerald-400 to-emerald-600 rounded-md" style={{ width: Math.max(3, (p.total / maxProv) * 100) + '%' }} /></div>
+                <span className="w-24 shrink-0 text-right text-[13px] font-semibold tabular-nums text-slate-700 dark:text-slate-200">{eur(p.total)}</span>
                 <span className="w-8 shrink-0 text-right text-[12px] text-slate-400">{p.n}</span>
               </div>
             ))}
@@ -529,14 +592,14 @@ function StatsView({ onBack }) {
   )
 }
 const Money = ({ label, v, accent }) => (
-  <div className="rounded-2xl bg-white border border-slate-200 p-4 shadow-sm">
-    <div className="text-[13px] text-slate-500">{label}</div>
-    <div className={'text-2xl font-extrabold tabular-nums mt-0.5 ' + (accent === 'emerald' ? 'text-emerald-600' : accent === 'indigo' ? 'text-indigo-600' : 'text-slate-900')}>{eur(v)}</div>
+  <div className="rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-4 shadow-sm">
+    <div className="text-[13px] text-slate-500 dark:text-slate-400">{label}</div>
+    <div className={'text-2xl font-extrabold tabular-nums mt-0.5 ' + (accent === 'emerald' ? 'text-emerald-600' : accent === 'indigo' ? 'text-indigo-600' : 'text-slate-900 dark:text-slate-100')}>{eur(v)}</div>
   </div>
 )
 
 /* ===================== LISTA (una tanda) ===================== */
-function ListView({ sel, items, marks, Fields, mark, reset, rotate, sync, exportXlsx, copyTable, onBack, onDelete }) {
+function ListView({ sel, items, marks, Fields, mark, reset, rotate, sync, userName, exportXlsx, copyTable, onBack, onDelete }) {
   const [filter, setFilter] = useState('todas')
   const [q, setQ] = useState('')
   const [modalId, setModalId] = useState(null)
@@ -559,24 +622,24 @@ function ListView({ sel, items, marks, Fields, mark, reset, rotate, sync, export
   })
 
   const FilterBtn = ({ id, label, n }) => (
-    <button onClick={() => setFilter(id)} className={'px-3 py-1.5 rounded-full text-[13px] font-medium whitespace-nowrap transition ' + (filter === id ? 'bg-indigo-600 text-white shadow' : 'bg-white text-slate-600 border border-slate-200 hover:border-indigo-300')}>{label}{n != null && <span className="ml-1 opacity-70">{n}</span>}</button>
+    <button onClick={() => setFilter(id)} className={'px-3 py-1.5 rounded-full text-[13px] font-medium whitespace-nowrap transition ' + (filter === id ? 'bg-indigo-600 text-white shadow' : 'bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-300 border border-slate-200 dark:border-slate-700 hover:border-indigo-300')}>{label}{n != null && <span className="ml-1 opacity-70">{n}</span>}</button>
   )
 
   return (
     <div>
       {/* cabecera sticky */}
-      <div className="sticky top-0 z-20 bg-white/90 backdrop-blur border-b border-slate-200">
+      <div className="sticky top-0 z-20 bg-white/90 dark:bg-slate-900/90 backdrop-blur border-b border-slate-200 dark:border-slate-800">
         <div className="mx-auto max-w-5xl px-4 safe-t">
           <div className="flex items-center gap-3 py-3">
-            <button onClick={onBack} className="grid place-items-center w-9 h-9 rounded-lg hover:bg-slate-100 text-slate-600 transition"><Icon d={I.back} /></button>
+            <button onClick={onBack} className="grid place-items-center w-9 h-9 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-600 dark:text-slate-300 transition"><Icon d={I.back} /></button>
             <div className="min-w-0">
-              <h1 className="font-bold text-slate-900 leading-tight truncate">{sel?.empresa || 'Lote'} · {relDay(sel?.creado)}</h1>
-              <div className="flex items-center gap-2"><p className="text-[12px] text-slate-500">{ver} verif · {rev} a revisar · {items.length - ver - rev} pend</p><SyncBadge sync={sync} /></div>
+              <h1 className="font-bold text-slate-900 dark:text-slate-100 leading-tight truncate">{sel?.empresa || 'Lote'} · {relDay(sel?.creado)}</h1>
+              <div className="flex items-center gap-2"><p className="text-[12px] text-slate-500 dark:text-slate-400">{ver} verif · {rev} a revisar · {items.length - ver - rev} pend</p><SyncBadge sync={sync} /></div>
             </div>
             <div className="ml-auto flex items-center gap-2">
-              <button onClick={() => setReview(true)} className="hidden sm:flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-indigo-600 text-white text-sm font-semibold shadow-lg shadow-indigo-600/30 hover:bg-indigo-700 transition"><Icon d={I.play} className="w-4 h-4" /> Revisar</button>
-              <button onClick={copyTable} className="grid place-items-center w-9 h-9 rounded-lg border border-slate-200 text-slate-600 hover:bg-slate-50 transition" title="Copiar tabla"><Icon d={I.copy} className="w-[18px] h-[18px]" /></button>
-              <button onClick={exportXlsx} className="grid place-items-center w-9 h-9 rounded-lg border border-slate-200 text-slate-600 hover:bg-slate-50 transition" title="Exportar Excel"><Icon d={I.download} className="w-[18px] h-[18px]" /></button>
+              <button onClick={() => setReview(true)} className="hidden sm:flex items-center gap-1.5 px-3.5 py-2 rounded-xl brand-grad text-white text-sm font-semibold shadow-lg shadow-indigo-600/30 hover:opacity-90 transition"><Icon d={I.play} className="w-4 h-4" /> Revisar</button>
+              <button onClick={copyTable} className="grid place-items-center w-9 h-9 rounded-lg border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 transition" title="Copiar tabla"><Icon d={I.copy} className="w-[18px] h-[18px]" /></button>
+              <button onClick={exportXlsx} className="grid place-items-center w-9 h-9 rounded-lg border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 transition" title="Exportar Excel"><Icon d={I.download} className="w-[18px] h-[18px]" /></button>
               <button onClick={onDelete} className="grid place-items-center w-9 h-9 rounded-lg border border-rose-200 text-rose-500 hover:bg-rose-50 transition" title="Eliminar tanda"><Icon d={I.trash} className="w-[18px] h-[18px]" /></button>
             </div>
           </div>
@@ -587,7 +650,7 @@ function ListView({ sel, items, marks, Fields, mark, reset, rotate, sync, export
             <FilterBtn id="flag" label="A revisar" n={rev} />
             <div className="relative ml-auto flex-1 min-w-[140px] max-w-[260px]">
               <Icon d={I.search} className="w-4 h-4 absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
-              <input value={q} onChange={e => setQ(e.target.value)} placeholder="Buscar…" className="w-full pl-8 pr-2 py-1.5 rounded-full border border-slate-200 text-[13px] focus:border-indigo-500 focus:ring-2 focus:ring-indigo-200 outline-none" />
+              <input value={q} onChange={e => setQ(e.target.value)} placeholder="Buscar…" className="w-full pl-8 pr-2 py-1.5 rounded-full border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 text-[13px] focus:border-indigo-500 focus:ring-2 focus:ring-indigo-200 outline-none" />
             </div>
           </div>
         </div>
@@ -601,11 +664,11 @@ function ListView({ sel, items, marks, Fields, mark, reset, rotate, sync, export
       </div>
 
       {/* botón flotante de revisión en móvil */}
-      <button onClick={() => setReview(true)} className="sm:hidden fixed right-4 bottom-4 z-30 flex items-center gap-2 px-5 py-3.5 rounded-full bg-indigo-600 text-white font-semibold shadow-xl shadow-indigo-600/40 active:scale-95 transition"><Icon d={I.play} className="w-5 h-5" /> Revisar</button>
+      <button onClick={() => setReview(true)} className="sm:hidden fixed right-4 bottom-4 z-30 flex items-center gap-2 px-5 py-3.5 rounded-full brand-grad text-white font-semibold shadow-xl shadow-indigo-600/40 active:scale-95 transition"><Icon d={I.play} className="w-5 h-5" /> Revisar</button>
 
       {modalId && <Modal it={items.find(x => x.id === modalId)} marks={marks} onClose={() => setModalId(null)} onRotate={rotate} Fields={Fields} mark={mark} />}
-      {review && <ReviewMode items={ordered} marks={marks} setReview={setReview} mark={mark} rotate={rotate} Fields={Fields} exportXlsx={exportXlsx} />}
-      {showDone && <DoneOverlay ver={ver} total={items.length} onExport={exportXlsx} onClose={() => setShowDone(false)} onBack={onBack} />}
+      {review && <ReviewMode items={ordered} marks={marks} setReview={setReview} mark={mark} rotate={rotate} Fields={Fields} exportXlsx={exportXlsx} userName={userName} />}
+      {showDone && <DoneOverlay ver={ver} total={items.length} userName={userName} onExport={exportXlsx} onClose={() => setShowDone(false)} onBack={onBack} />}
     </div>
   )
 }
@@ -614,21 +677,21 @@ function InvoiceCard({ it, marks, Fields, mark, reset, rotate, onZoom }) {
   const s = marks[it.id] || {}
   const done = s.status === 'ver'
   return (
-    <div className={'rounded-2xl bg-white border shadow-sm overflow-hidden grid sm:grid-cols-[300px_1fr] transition ' + (done ? 'opacity-60 border-slate-200' : it.flag || s.status === 'rev' ? 'border-amber-300' : 'border-slate-200')}>
+    <div className={'rounded-2xl bg-white dark:bg-slate-900 border shadow-sm overflow-hidden grid sm:grid-cols-[300px_1fr] transition ' + (done ? 'opacity-60 border-slate-200 dark:border-slate-800' : it.flag || s.status === 'rev' ? 'border-amber-300 dark:border-amber-500/50' : 'border-slate-200 dark:border-slate-800')}>
       <div className="relative bg-slate-900 h-56 sm:h-auto sm:min-h-[260px] flex items-center justify-center overflow-hidden cursor-zoom-in" onClick={onZoom}>
         <img src={it.img} alt="" className="max-w-full max-h-full object-contain" style={{ transform: `rotate(${rotOf(it, marks)}deg)`, maxWidth: rotOf(it, marks) % 180 ? '70%' : '100%' }} />
         <div className="absolute top-2 right-2 flex gap-1.5">
-          <button onClick={e => { e.stopPropagation(); rotate(it.id) }} className="grid place-items-center w-8 h-8 rounded-lg bg-white/90 text-slate-700 hover:bg-white shadow"><Icon d={I.rotate} className="w-4 h-4" /></button>
-          <button onClick={e => { e.stopPropagation(); onZoom() }} className="grid place-items-center w-8 h-8 rounded-lg bg-white/90 text-slate-700 hover:bg-white shadow"><Icon d={I.zoomIn} className="w-4 h-4" /></button>
+          <button onClick={e => { e.stopPropagation(); rotate(it.id) }} className="grid place-items-center w-8 h-8 rounded-lg bg-white/90 text-slate-700 dark:text-slate-200 hover:bg-white shadow"><Icon d={I.rotate} className="w-4 h-4" /></button>
+          <button onClick={e => { e.stopPropagation(); onZoom() }} className="grid place-items-center w-8 h-8 rounded-lg bg-white/90 text-slate-700 dark:text-slate-200 hover:bg-white shadow"><Icon d={I.zoomIn} className="w-4 h-4" /></button>
         </div>
       </div>
       <div className="p-4">
-        <div className="text-base font-bold text-slate-900 mb-0.5">{F(it, marks, 'proveedor') || '—'}</div>
+        <div className="text-base font-bold text-slate-900 dark:text-slate-100 mb-0.5">{F(it, marks, 'proveedor') || '—'}</div>
         <Fields it={it} />
         <div className="flex flex-wrap gap-2 mt-3">
           <button onClick={() => mark(it.id, 'ver')} className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-emerald-600 text-white text-sm font-semibold hover:bg-emerald-700 transition"><Icon d={I.check} className="w-4 h-4" /> Verificado</button>
           <button onClick={() => mark(it.id, 'rev')} className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-amber-500 text-white text-sm font-semibold hover:bg-amber-600 transition"><Icon d={I.flag} className="w-4 h-4" /> A revisar</button>
-          <button onClick={() => reset(it.id)} className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-slate-100 text-slate-600 text-sm font-semibold hover:bg-slate-200 transition"><Icon d={I.reset} className="w-4 h-4" /> Reset</button>
+          <button onClick={() => reset(it.id)} className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 text-sm font-semibold hover:bg-slate-200 dark:hover:bg-slate-700 transition"><Icon d={I.reset} className="w-4 h-4" /> Reset</button>
         </div>
       </div>
     </div>
@@ -640,15 +703,15 @@ function Modal({ it, marks, onClose, onRotate, Fields, mark }) {
   const [z, setZ] = useState(1)
   return (
     <div className="fixed inset-0 z-50 bg-slate-950/95 flex flex-col md:grid md:grid-cols-[1fr_380px]">
-      <button onClick={onClose} className="absolute top-3 left-3 z-10 grid place-items-center w-10 h-10 rounded-xl bg-white/90 text-slate-700 hover:bg-white shadow"><Icon d={I.x} /></button>
+      <button onClick={onClose} className="absolute top-3 left-3 z-10 grid place-items-center w-10 h-10 rounded-xl bg-white/90 text-slate-700 dark:text-slate-200 hover:bg-white shadow"><Icon d={I.x} /></button>
       <div className="flex-1 min-h-0 overflow-auto grid place-items-center p-4 thin-sb">
         <img src={it.img} alt="" className="transition-transform" style={{ transform: `rotate(${rotOf(it, marks)}deg) scale(${z})` }} />
       </div>
-      <div className="bg-white/95 backdrop-blur p-5 overflow-auto thin-sb max-h-[45vh] md:max-h-none safe-b">
+      <div className="bg-white/95 dark:bg-slate-900/95 backdrop-blur p-5 overflow-auto thin-sb max-h-[45vh] md:max-h-none safe-b">
         <div className="flex gap-2 mb-3">
-          <button onClick={() => setZ(z * 1.25)} className="grid place-items-center w-10 h-10 rounded-lg border border-slate-200 hover:bg-slate-50"><Icon d={I.zoomIn} /></button>
-          <button onClick={() => setZ(z * 0.8)} className="grid place-items-center w-10 h-10 rounded-lg border border-slate-200 hover:bg-slate-50"><Icon d={I.zoomOut} /></button>
-          <button onClick={() => onRotate(it.id)} className="grid place-items-center w-10 h-10 rounded-lg border border-slate-200 hover:bg-slate-50"><Icon d={I.rotate} /></button>
+          <button onClick={() => setZ(z * 1.25)} className="grid place-items-center w-10 h-10 rounded-lg border border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800"><Icon d={I.zoomIn} /></button>
+          <button onClick={() => setZ(z * 0.8)} className="grid place-items-center w-10 h-10 rounded-lg border border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800"><Icon d={I.zoomOut} /></button>
+          <button onClick={() => onRotate(it.id)} className="grid place-items-center w-10 h-10 rounded-lg border border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800"><Icon d={I.rotate} /></button>
         </div>
         <Fields it={it} />
         <div className="flex gap-2 mt-4">
@@ -661,7 +724,7 @@ function Modal({ it, marks, onClose, onRotate, Fields, mark }) {
 }
 
 /* ===================== MODO REVISIÓN (Tinder) ===================== */
-function ReviewMode({ items, marks, setReview, mark, rotate, Fields, exportXlsx }) {
+function ReviewMode({ items, marks, setReview, mark, rotate, Fields, exportXlsx, userName }) {
   const [idx, setIdx] = useState(0)
   const [done, setDone] = useState(false)
   const [sheet, setSheet] = useState(false)   // bottom sheet de datos (móvil)
@@ -722,7 +785,8 @@ function ReviewMode({ items, marks, setReview, mark, rotate, Fields, exportXlsx 
       <div className="fixed inset-0 z-50 bg-slate-950 text-slate-100 flex items-center justify-center p-5">
         <div className="w-full max-w-sm rounded-3xl bg-slate-900 border border-slate-800 p-7 text-center card-in">
           <div className="text-6xl mb-2">🎉</div>
-          <h2 className="text-xl font-bold">Revisión completada</h2>
+          <h2 className="text-xl font-bold">{cheer(userName)}</h2>
+          <p className="text-slate-400 mt-1 text-sm">Revisión completada{userName ? ` — sigue así 💪` : ''}</p>
           <div className="mt-5 space-y-2 text-left text-sm">
             <div className="flex justify-between"><span className="text-slate-400">Verificadas</span><b className="text-emerald-400">{ver}</b></div>
             <div className="flex justify-between"><span className="text-slate-400">A revisar</span><b className="text-amber-400">{rev}</b></div>
@@ -745,7 +809,7 @@ function ReviewMode({ items, marks, setReview, mark, rotate, Fields, exportXlsx 
       {/* barra superior + progreso */}
       <div className="relative z-30 safe-t">
         <div className="flex items-center gap-3 px-4 py-3">
-          <span className="font-bold tabular-nums">{idx + 1}<span className="text-slate-500">/{items.length}</span></span>
+          <span className="font-bold tabular-nums">{idx + 1}<span className="text-slate-500 dark:text-slate-400">/{items.length}</span></span>
           <span className="text-sm text-slate-400 tabular-nums">⏱ {clock}{countRef.current ? ` · ${countRef.current}` : ''}</span>
           <div className="ml-auto flex items-center gap-1.5">
             <button onClick={prev} className="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-sm">◀</button>
@@ -775,12 +839,12 @@ function ReviewMode({ items, marks, setReview, mark, rotate, Fields, exportXlsx 
         </div>
 
         {/* panel datos: lateral en desktop */}
-        <div className="hidden md:flex flex-col bg-white text-slate-900 border-l border-slate-200 overflow-hidden">
+        <div className="hidden md:flex flex-col bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100 border-l border-slate-200 dark:border-slate-800 overflow-hidden">
           <div className="flex-1 overflow-auto thin-sb p-5">
             <div className="text-lg font-bold mb-2">{F(it, marks, 'proveedor') || '—'}</div>
             <Fields it={it} />
           </div>
-          <div className="flex gap-3 p-4 border-t border-slate-200">
+          <div className="flex gap-3 p-4 border-t border-slate-200 dark:border-slate-800">
             <button onClick={() => doMark('ver')} className="flex-1 py-4 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold flex items-center justify-center gap-2"><Icon d={I.check} /> Verificar</button>
             <button onClick={() => doMark('rev')} className="flex-1 py-4 rounded-xl bg-amber-500 hover:bg-amber-600 text-white font-bold flex items-center justify-center gap-2"><Icon d={I.flag} /> A revisar</button>
           </div>
@@ -801,11 +865,11 @@ function ReviewMode({ items, marks, setReview, mark, rotate, Fields, exportXlsx 
       {sheet && (
         <div className="md:hidden fixed inset-0 z-40" onClick={() => setSheet(false)}>
           <div className="absolute inset-0 bg-black/40" />
-          <div className="absolute inset-x-0 bottom-0 max-h-[80vh] rounded-t-3xl bg-white text-slate-900 flex flex-col card-in safe-b" onClick={e => e.stopPropagation()}>
+          <div className="absolute inset-x-0 bottom-0 max-h-[80vh] rounded-t-3xl bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100 flex flex-col card-in safe-b" onClick={e => e.stopPropagation()}>
             <div className="pt-3 pb-1 grid place-items-center"><div className="w-10 h-1.5 rounded-full bg-slate-300" /></div>
             <div className="flex items-center justify-between px-5 pb-2">
               <div className="text-base font-bold truncate">{F(it, marks, 'proveedor') || '—'}</div>
-              <button onClick={() => setSheet(false)} className="grid place-items-center w-8 h-8 rounded-lg bg-slate-100"><Icon d={I.x} className="w-4 h-4" /></button>
+              <button onClick={() => setSheet(false)} className="grid place-items-center w-8 h-8 rounded-lg bg-slate-100 dark:bg-slate-800"><Icon d={I.x} className="w-4 h-4" /></button>
             </div>
             <div className="flex-1 overflow-auto thin-sb px-5 pb-4"><Fields it={it} /></div>
           </div>
@@ -815,7 +879,7 @@ function ReviewMode({ items, marks, setReview, mark, rotate, Fields, exportXlsx 
   )
 }
 const CtrlBtn = ({ d, onClick }) => (
-  <button onClick={onClick} className="grid place-items-center w-12 h-12 rounded-2xl bg-white/95 text-slate-700 shadow-lg hover:bg-white active:scale-95 transition"><Icon d={d} /></button>
+  <button onClick={onClick} className="grid place-items-center w-12 h-12 rounded-2xl bg-white/95 text-slate-700 dark:text-slate-200 shadow-lg hover:bg-white active:scale-95 transition"><Icon d={d} /></button>
 )
 
 /* resumen siempre visible de los datos guardados (móvil) — pulsar = editar */
@@ -850,17 +914,17 @@ function ReviewSummary({ it, marks, onEdit }) {
 }
 
 /* ===================== completado (lista) ===================== */
-function DoneOverlay({ ver, total, onExport, onClose, onBack }) {
+function DoneOverlay({ ver, total, userName, onExport, onClose, onBack }) {
   return (
     <div className="fixed inset-0 z-50 bg-slate-950/60 flex items-center justify-center p-5">
-      <div className="w-full max-w-sm rounded-3xl bg-white p-7 text-center card-in">
+      <div className="w-full max-w-sm rounded-3xl bg-white dark:bg-slate-900 p-7 text-center card-in">
         <div className="text-6xl mb-2">🎉</div>
-        <h2 className="text-xl font-bold text-slate-900">¡Todo verificado!</h2>
-        <p className="text-slate-500 mt-1">{ver} de {total} facturas verificadas</p>
+        <h2 className="text-xl font-bold text-slate-900 dark:text-slate-100 dark:text-slate-100">{cheer(userName)}</h2>
+        <p className="text-slate-500 dark:text-slate-400 mt-1">Todo verificado · {ver} de {total} facturas. ¡Gran trabajo! 💪</p>
         <button onClick={onExport} className="mt-6 w-full py-3.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold flex items-center justify-center gap-2"><Icon d={I.download} className="w-5 h-5" /> Exportar Excel</button>
         <div className="flex gap-2 mt-2">
-          <button onClick={onClose} className="flex-1 py-2.5 rounded-xl bg-slate-100 hover:bg-slate-200 font-semibold text-slate-700">Seguir</button>
-          <button onClick={onBack} className="flex-1 py-2.5 rounded-xl bg-slate-100 hover:bg-slate-200 font-semibold text-slate-700">Al panel</button>
+          <button onClick={onClose} className="flex-1 py-2.5 rounded-xl bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 font-semibold text-slate-700 dark:text-slate-200">Seguir</button>
+          <button onClick={onBack} className="flex-1 py-2.5 rounded-xl bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 font-semibold text-slate-700 dark:text-slate-200">Al panel</button>
         </div>
       </div>
     </div>
@@ -871,12 +935,12 @@ function DoneOverlay({ ver, total, onExport, onClose, onBack }) {
 function ConfirmDelete({ job, onCancel, onConfirm }) {
   return (
     <div className="fixed inset-0 z-[60] bg-slate-950/60 flex items-center justify-center p-5" onClick={onCancel}>
-      <div className="w-full max-w-sm rounded-3xl bg-white p-6 card-in" onClick={e => e.stopPropagation()}>
+      <div className="w-full max-w-sm rounded-3xl bg-white dark:bg-slate-900 p-6 card-in" onClick={e => e.stopPropagation()}>
         <div className="grid place-items-center w-12 h-12 rounded-2xl bg-rose-100 text-rose-600 mb-3"><Icon d={I.trash} /></div>
-        <h2 className="text-lg font-bold text-slate-900">Eliminar lote de {job.empresa || '—'}</h2>
-        <p className="text-sm text-slate-500 mt-1.5">Se borrarán sus <b>{job.n_facturas ?? 0}</b> facturas, las imágenes del Storage y su estado de revisión. Esta acción no se puede deshacer.</p>
+        <h2 className="text-lg font-bold text-slate-900 dark:text-slate-100">Eliminar lote de {job.empresa || '—'}</h2>
+        <p className="text-sm text-slate-500 dark:text-slate-400 mt-1.5">Se borrarán sus <b>{job.n_facturas ?? 0}</b> facturas, las imágenes del Storage y su estado de revisión. Esta acción no se puede deshacer.</p>
         <div className="flex gap-2 mt-5">
-          <button onClick={onCancel} className="flex-1 py-3 rounded-xl bg-slate-100 hover:bg-slate-200 font-semibold text-slate-700">Cancelar</button>
+          <button onClick={onCancel} className="flex-1 py-3 rounded-xl bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 font-semibold text-slate-700 dark:text-slate-200">Cancelar</button>
           <button onClick={onConfirm} className="flex-1 py-3 rounded-xl bg-rose-600 hover:bg-rose-700 text-white font-semibold">Eliminar</button>
         </div>
       </div>
