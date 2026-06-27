@@ -195,7 +195,7 @@ def relay_down(tok):
                     except Exception as ex:
                         print(f"    ✗ img {iid}: {ex}"); img_path = None
                 rows.append({
-                    "job_id": jid, "empresa": emp, "item_id": iid, "img_path": img_path,
+                    "job_id": jid, "tanda": jid, "empresa": emp, "item_id": iid, "img_path": img_path,
                     "rot0": int(tonum(it.get("rot0")) or 0), "fecha": it.get("fecha"), "proveedor": it.get("proveedor"),
                     "num": it.get("num"), "base": tonum(it.get("base")), "iva": tonum(it.get("iva")), "total": tonum(it.get("total")),
                     "timp": it.get("timp"), "conf": it.get("conf"), "flag": bool(it.get("flag")), "obs": it.get("obs"),
