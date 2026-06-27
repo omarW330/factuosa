@@ -1,6 +1,12 @@
-# AGM · Revisión de facturas (React + Vite)
+# AGM · Revisión de facturas (React + Vite + Tailwind)
 
 Web estática para revisar facturas (foto vs datos), sin base de datos: lee ficheros **JSON** de `public/data/`. El estado de revisión se guarda en el navegador (localStorage). Al terminar puedes **Copiar tabla** (pegar en Excel) o **Exportar .xlsx**.
+
+UI rediseñada con **Tailwind v4**, mobile-first:
+- **Panel general** (pantalla inicial): KPIs globales (verificadas / a revisar / pendientes), progreso y una tarjeta por tanda con su estado, % y última revisión.
+- **Lista** por tanda: filtros, buscador, edición en línea y modal de zoom.
+- **Modo revisión tipo Tinder**: imagen a pantalla completa, **desliza ▶ verificar / ◀ a revisar**, zoom/giro/encajar, panel de datos (lateral en escritorio, *bottom sheet* en móvil), teclado (V / P / ◀ / ▶ / +/−) y resumen final.
+- **Eliminar datos**: borra una tanda para que el repo no acumule JSON/imágenes antiguas. Desde la web borra el `.json` de verdad en `npm run dev`; en producción solo la oculta en ese navegador. Para limpiar el repo a lo grande, usa el script `npm run clean` (ver abajo).
 
 ## Estructura de datos (los "ficheros = BD")
 ```
@@ -27,6 +33,17 @@ npm install
 npm run dev      # http://localhost:5173
 npm run build    # genera dist/
 ```
+
+## Limpiar datos antiguos (que el repo no crezca)
+```bash
+npm run data                              # lista tandas y su tamaño
+node scripts/clean-data.js --keep 3       # conserva solo las 3 más recientes
+node scripts/clean-data.js --before 2026-06-01   # borra anteriores a esa fecha
+node scripts/clean-data.js --file 2026-06-25.json # borra una concreta
+node scripts/clean-data.js --all          # borra todas
+# añade --dry para simular sin borrar
+```
+Borra los `.json` de `public/data/` y actualiza `index.json`. Luego haz commit para que el repo deje de cargar esas imágenes.
 
 ## Despliegue (GitHub Pages, automático)
 1. Sube este repo a GitHub.
