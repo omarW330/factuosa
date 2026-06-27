@@ -1,0 +1,56 @@
+// Generador de .xlsx real sin librerías (ZIP store + CRC32) y utilidades de tabla.
+const escA = s => String(s).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;')
+const CRCT = (() => { let t = []; for (let n = 0; n < 256; n++) { let c = n; for (let k = 0; k < 8; k++) c = c & 1 ? 0xEDB88320 ^ (c >>> 1) : c >>> 1; t[n] = c >>> 0 } return t })()
+function crc32(u8) { let c = 0xFFFFFFFF; for (let i = 0; i < u8.length; i++) c = CRCT[(c ^ u8[i]) & 0xFF] ^ (c >>> 8); return (c ^ 0xFFFFFFFF) >>> 0 }
+const enc = s => new TextEncoder().encode(s)
+function zipStore(files) {
+  const u16 = n => [n & 255, (n >> 8) & 255], u32 = n => [n & 255, (n >> 8) & 255, (n >> 16) & 255, (n >> 24) & 255]
+  let parts = [], cen = [], off = 0
+  files.forEach(f => {
+    const nm = enc(f.name), dt = f.data, crc = crc32(dt)
+    const lh = [].concat([80, 75, 3, 4], u16(20), u16(0), u16(0), u16(0), u16(0), u32(crc), u32(dt.length), u32(dt.length), u16(nm.length), u16(0))
+    parts.push(new Uint8Array(lh), nm, dt)
+    cen.push([].concat([80, 75, 1, 2], u16(20), u16(20), u16(0), u16(0), u16(0), u16(0), u32(crc), u32(dt.length), u32(dt.length), u16(nm.length), u16(0), u16(0), u16(0), u16(0), u32(0), u32(off)), nm)
+    off += lh.length + nm.length + dt.length
+  })
+  let cstart = off, clen = 0, cparts = []
+  cen.forEach(x => { const a = Array.isArray(x) ? new Uint8Array(x) : x; cparts.push(a); clen += a.length })
+  const end = new Uint8Array([].concat([80, 75, 5, 6], u16(0), u16(0), u16(cen.length / 2), u16(cen.length / 2), u32(clen), u32(cstart), u16(0)))
+  let all = parts.concat(cparts, [end]), tot = 0; all.forEach(a => tot += a.length)
+  const out = new Uint8Array(tot); let p = 0; all.forEach(a => { out.set(a, p); p += a.length }); return out
+}
+function colL(i) { let s = ''; i++; while (i) { let m = (i - 1) % 26; s = String.fromCharCode(65 + m) + s; i = (i - m - 1) / 26 } return s }
+const cT = (r, c, v, s) => `<c r="${colL(c)}${r}" t="inlineStr"${s ? ` s="${s}"` : ''}><is><t xml:space="preserve">${escA(v)}</t></is></c>`
+const cN = (r, c, v, s) => `<c r="${colL(c)}${r}"${s ? ` s="${s}"` : ''}><v>${Number(v).toFixed(2)}</v></c>`
+
+// rows: [{fecha,proveedor,num,base,iva,total,estado,obs,amber}]
+export function buildXlsx(rows) {
+  const hdr = ['F.Factura', 'Proveedor', 'Nº Factura', 'Importe', 'IVA', 'Total', 'Estado', 'Observaciones']
+  let sd = `<row r="1">` + hdr.map((h, c) => cT(1, c, h, 1)).join('') + `</row>`, r = 2, tb = 0, ti = 0, tt = 0
+  rows.forEach(d => {
+    const st = d.amber ? 3 : 7, se = d.amber ? 4 : 2
+    tb += +d.base; ti += +d.iva; tt += +d.total
+    sd += `<row r="${r}">` + cT(r, 0, d.fecha, st) + cT(r, 1, d.proveedor, st) + cT(r, 2, d.num, st) +
+      cN(r, 3, d.base, se) + cN(r, 4, d.iva, se) + cN(r, 5, d.total, se) + cT(r, 6, d.estado, st) + cT(r, 7, d.obs, st) + `</row>`; r++
+  })
+  sd += `<row r="${r}">` + cT(r, 0, '', 5) + cT(r, 1, '', 5) + cT(r, 2, 'TOTAL', 5) + cN(r, 3, tb, 6) + cN(r, 4, ti, 6) + cN(r, 5, tt, 6) + cT(r, 6, '', 5) + cT(r, 7, '', 5) + `</row>`
+  const sheet = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><cols><col min="1" max="1" width="12"/><col min="2" max="2" width="34"/><col min="3" max="3" width="22"/><col min="4" max="6" width="11"/><col min="7" max="7" width="12"/><col min="8" max="8" width="50"/></cols><sheetData>${sd}</sheetData></worksheet>`
+  const styles = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><numFmts count="1"><numFmt numFmtId="164" formatCode="#,##0.00\\ &quot;€&quot;"/></numFmts><fonts count="3"><font><sz val="11"/><name val="Calibri"/></font><font><b/><color rgb="FFFFFFFF"/><sz val="11"/><name val="Calibri"/></font><font><b/><sz val="11"/><name val="Calibri"/></font></fonts><fills count="5"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill><fill><patternFill patternType="solid"><fgColor rgb="FF1F4E78"/></patternFill></fill><fill><patternFill patternType="solid"><fgColor rgb="FFFFD24D"/></patternFill></fill><fill><patternFill patternType="solid"><fgColor rgb="FFDCE6F1"/></patternFill></fill></fills><borders count="1"><border/></borders><cellStyleXfs count="1"><xf/></cellStyleXfs><cellXfs count="8"><xf/><xf fontId="1" fillId="2" applyFont="1" applyFill="1" applyAlignment="1"><alignment horizontal="center"/></xf><xf numFmtId="164" applyNumberFormat="1"/><xf fillId="3" applyFill="1"/><xf numFmtId="164" fillId="3" applyNumberFormat="1" applyFill="1"/><xf fontId="2" fillId="4" applyFont="1" applyFill="1"/><xf numFmtId="164" fontId="2" fillId="4" applyNumberFormat="1" applyFont="1" applyFill="1"/><xf/></cellXfs><cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles></styleSheet>`
+  const ct = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/><Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/></Types>`
+  const rels = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>`
+  const wb = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets><sheet name="Revisado" sheetId="1" r:id="rId1"/></sheets></workbook>`
+  const wbr = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/><Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/></Relationships>`
+  const files = [
+    { name: '[Content_Types].xml', data: enc(ct) }, { name: '_rels/.rels', data: enc(rels) },
+    { name: 'xl/workbook.xml', data: enc(wb) }, { name: 'xl/_rels/workbook.xml.rels', data: enc(wbr) },
+    { name: 'xl/styles.xml', data: enc(styles) }, { name: 'xl/worksheets/sheet1.xml', data: enc(sheet) }
+  ]
+  return new Blob([zipStore(files)], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' })
+}
+
+export function tsvTable(rows) {
+  const hdr = ['F.Factura', 'Proveedor', 'Nº Factura', 'Importe', 'IVA', 'Total', 'Estado', 'Observaciones']
+  const lines = [hdr.join('\t')]
+  rows.forEach(d => lines.push([d.fecha, d.proveedor, d.num, d.base, d.iva, d.total, d.estado, (d.obs || '').replace(/\t|\n/g, ' ')].join('\t')))
+  return lines.join('\n')
+}
