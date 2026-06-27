@@ -158,57 +158,88 @@ def relay_up(tok):
 
 
 # ---------------- Relay ↓ (Dropbox /web → Supabase) ----------------
-def relay_down(tok):
-    entries = dbx_list(tok, WEB)
-    for e in entries:
-        if e.get(".tag") != "file":
-            continue
-        name = e["name"]
-        if name == "status.json":
-            volcar_status(tok, e["path_lower"]); continue
-        m = re.match(r"^([0-9a-fA-F-]{36})\.json$", name)
-        if not m or not UUID_RE.match(m.group(1)):
-            continue
-        jid = m.group(1)
-        job = sb_rest("GET", f"jobs?id=eq.{jid}&select=id,empresa")
-        if not job:
-            print(f"  · {name}: no hay job {jid}, lo ignoro"); continue
-        emp = job[0].get("empresa")
-        try:
-            data = json.loads(dbx_download(tok, e["path_lower"]).decode("utf-8"))
-            items = data.get("items", []) if isinstance(data, dict) else (data if isinstance(data, list) else [])
-            if items:
-                muestra = {k: ((str(v)[:24] + "…") if k == "img" else v) for k, v in items[0].items()}
-                print(f"  · {jid}: {len(items)} items. Muestra item[0]: {muestra}")
-            # idempotente: limpia facturas previas de ese job
-            sb_rest("DELETE", f"facturas?job_id=eq.{jid}")
-            rows, okimg = [], 0
-            for i, it in enumerate(items):
-                iid = it.get("id") or f"r{i + 1}"
-                img_path = None
+CT = {"jpg": "image/jpeg", "jpeg": "image/jpeg", "png": "image/png", "webp": "image/webp", "gif": "image/gif", "pdf": "application/pdf"}
+
+def _src_filename(it):
+    """Nombre del fichero original en /entrada: campo 'archivo'/'orig' o el [orig: ...] del obs."""
+    a = it.get("archivo") or it.get("orig")
+    if a:
+        return str(a).strip()
+    mo = re.search(r"\[orig:\s*([^\]\r\n]+?)\s*\]", str(it.get("obs") or ""), re.I)
+    return mo.group(1).strip() if mo else None
+
+def process_web_file(tok, e, move_after):
+    name = e["name"]
+    jid = name[:-5]  # sin .json
+    job = sb_rest("GET", f"jobs?id=eq.{jid}&select=id,empresa")
+    if not job:
+        print(f"  · {name}: no hay job {jid}, lo ignoro"); return
+    emp = job[0].get("empresa")
+    try:
+        data = json.loads(dbx_download(tok, e["path_lower"]).decode("utf-8"))
+        items = data.get("items", []) if isinstance(data, dict) else (data if isinstance(data, list) else [])
+        if items:
+            muestra = {k: ((str(v)[:24] + "…") if k == "img" else v) for k, v in items[0].items()}
+            print(f"  · {jid}: {len(items)} items. Muestra item[0]: {muestra}")
+        sb_rest("DELETE", f"facturas?job_id=eq.{jid}")   # idempotente
+        rows, okimg = [], 0
+        for i, it in enumerate(items):
+            iid = it.get("id") or f"r{i + 1}"
+            img_path = None
+            # 1) foto REAL desde Dropbox /entrada (por nombre de fichero original)
+            src = _src_filename(it)
+            if src:
+                safe = re.sub(r"[^\w.\-]+", "_", src)
+                ext = safe.rsplit(".", 1)[-1].lower() if "." in safe else "jpg"
+                try:
+                    content = dbx_download(tok, f"{ENTRADA}/{emp}/{jid}/{safe}")
+                    img_path = f"{jid}/{iid}.{ext}"
+                    sb_storage_upload("facturas", img_path, content, CT.get(ext, "image/jpeg")); okimg += 1
+                except Exception:
+                    print(f"    · img {iid}: no encontrada en /entrada ({src})"); img_path = None
+            # 2) fallback: base64 embebido (ignora placeholders diminutos tipo 1x1)
+            if not img_path:
                 mm = re.match(r"^data:(image/[a-z+]+);base64,(.+)$", str(it.get("img") or ""), re.I)
-                if mm:
+                if mm and len(mm.group(2)) > 200:
                     ext = EXT.get(mm.group(1).lower(), "jpg")
                     img_path = f"{jid}/{iid}.{ext}"
                     try:
                         sb_storage_upload("facturas", img_path, base64.b64decode(mm.group(2)), mm.group(1)); okimg += 1
                     except Exception as ex:
                         print(f"    ✗ img {iid}: {ex}"); img_path = None
-                rows.append({
-                    "job_id": jid, "tanda": jid, "empresa": emp, "item_id": iid, "img_path": img_path,
-                    "rot0": int(tonum(it.get("rot0")) or 0), "fecha": it.get("fecha"), "proveedor": it.get("proveedor"),
-                    "num": it.get("num"), "base": tonum(it.get("base")), "iva": tonum(it.get("iva")), "total": tonum(it.get("total")),
-                    "timp": it.get("timp"), "conf": it.get("conf"), "flag": bool(it.get("flag")), "obs": it.get("obs"),
-                })
-            if rows:
-                sb_rest("POST", "facturas", rows)
-            sb_rest("PATCH", f"jobs?id=eq.{jid}", {"estado": "listo", "n_facturas": len(rows), "terminado": "now()"})
+            rows.append({
+                "job_id": jid, "tanda": jid, "empresa": emp, "item_id": iid, "img_path": img_path,
+                "rot0": int(tonum(it.get("rot0")) or 0), "fecha": it.get("fecha"), "proveedor": it.get("proveedor"),
+                "num": it.get("num"), "base": tonum(it.get("base")), "iva": tonum(it.get("iva")), "total": tonum(it.get("total")),
+                "timp": it.get("timp"), "conf": it.get("conf"), "flag": bool(it.get("flag")), "obs": it.get("obs"),
+            })
+        if rows:
+            sb_rest("POST", "facturas", rows)
+        sb_rest("PATCH", f"jobs?id=eq.{jid}", {"estado": "listo", "n_facturas": len(rows), "terminado": "now()"})
+        if move_after:
             dbx_move(tok, e["path_lower"], f"{WEB}/procesados/{name}")
-            print(f"  ✓ {jid}: {len(rows)} facturas ({okimg} imágenes) → Supabase, job=listo")
-        except Exception as ex:
-            print(f"  ✗ {jid}: ERROR procesando → {ex}")
-            try: sb_rest("PATCH", f"jobs?id=eq.{jid}", {"estado": "error"})
-            except Exception: pass
+        print(f"  ✓ {jid}: {len(rows)} facturas ({okimg} imágenes) → Supabase, job=listo")
+    except Exception as ex:
+        print(f"  ✗ {jid}: ERROR procesando → {ex}")
+        try: sb_rest("PATCH", f"jobs?id=eq.{jid}", {"estado": "error"})
+        except Exception: pass
+
+def _is_job_json(name):
+    return bool(re.match(r"^[0-9a-fA-F-]{36}\.json$", name)) and bool(UUID_RE.match(name[:-5]))
+
+def relay_down(tok):
+    for e in dbx_list(tok, WEB):
+        if e.get(".tag") != "file":
+            continue
+        if e["name"] == "status.json":
+            volcar_status(tok, e["path_lower"]); continue
+        if _is_job_json(e["name"]):
+            process_web_file(tok, e, True)
+    if os.environ.get("REPROCESS"):
+        print("  (REPROCESS: re-vuelco /web/procesados)")
+        for e in dbx_list(tok, f"{WEB}/procesados"):
+            if e.get(".tag") == "file" and _is_job_json(e["name"]):
+                process_web_file(tok, e, False)
 
 
 def volcar_status(tok, path):

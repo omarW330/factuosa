@@ -3,6 +3,11 @@ on:
   schedule:
     - cron: '*/10 * * * *'   # cada ~10 min (GitHub puede retrasarlo)
   workflow_dispatch:          # botón "Run workflow" para probar al momento
+    inputs:
+      reprocess:
+        description: 'Re-vuelca también los lotes ya procesados (/web/procesados)'
+        type: boolean
+        default: false
 concurrency:
   group: relay
   cancel-in-progress: false
@@ -21,3 +26,4 @@ jobs:
           DROPBOX_REFRESH_TOKEN: ${{ secrets.DROPBOX_REFRESH_TOKEN }}
           VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          REPROCESS: ${{ (github.event_name == 'workflow_dispatch' && inputs.reprocess) && '1' || '' }}
