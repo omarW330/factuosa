@@ -36,7 +36,7 @@ body {
   max-width: none;
   will-change: transform;
 }
-.vp { touch-action: none; }
+.vp, .vp img, .vp-img { touch-action: none; -ms-touch-action: none; }
 
 /* icono grande de swipe (✓ / ⚑) que aparece al deslizar */
 .swipe-icon {

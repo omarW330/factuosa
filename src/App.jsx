@@ -609,6 +609,8 @@ function ListView({ sel, items, marks, Fields, mark, reset, rotate, sync, userNa
   const ver = items.filter(it => marks[it.id]?.status === 'ver').length
   const rev = items.filter(it => marks[it.id]?.status === 'rev').length
   useEffect(() => { if (items.length && ver === items.length) setShowDone(true) }, [ver, items.length])
+  /* precarga TODAS las fotos del lote en caché al entrar (sin esperas en revisión) */
+  useEffect(() => { const pre = items.map(it => { const im = new Image(); im.src = it.img; return im }); return () => pre.forEach(im => { im.src = '' }) }, [items])
 
   const ordered = [...items].sort((a, b) => rank(a, marks) - rank(b, marks))
   const ql = q.trim().toLowerCase()
@@ -737,8 +739,6 @@ function ReviewMode({ items, marks, setReview, mark, rotate, Fields, exportXlsx,
   useEffect(() => { swipeRef.current = swipeMode; try { localStorage.setItem('agm_swipe', swipeMode ? '1' : '0') } catch (e) {} }, [swipeMode])
 
   useEffect(() => { const i = setInterval(() => setClock(fmtT(Date.now() - t0.current)), 500); return () => clearInterval(i) }, [])
-  /* precarga TODAS las fotos en caché al entrar a revisión (evita esperas al pasar) */
-  useEffect(() => { const pre = items.map(it => { const im = new Image(); im.src = it.img; return im }); return () => pre.forEach(im => { im.src = '' }) }, [])
   const apply = () => { const t = tf.current; if (imgRef.current) imgRef.current.style.transform = `translate(-50%,-50%) translate(${t.tx}px,${t.ty}px) rotate(${t.rot}deg) scale(${t.sc})` }
   const fit = () => { const im = imgRef.current, vp = vpRef.current; if (!im || !im.naturalWidth) return; const s = (Math.min(vp.clientWidth / im.naturalWidth, vp.clientHeight / im.naturalHeight) || 1) * .95; tf.current = { ...tf.current, tx: 0, ty: 0, sc: s, fit: s }; apply() }
   const setStamp = () => { const st = marks[it?.id]?.status; if (stampRef.current) { stampRef.current.style.display = st ? 'block' : 'none'; stampRef.current.className = 'absolute top-5 left-1/2 -translate-x-1/2 -rotate-6 px-5 py-2 rounded-xl border-4 font-black text-2xl z-20 ' + (st === 'ver' ? 'text-emerald-600 border-emerald-500 bg-emerald-50/90' : 'text-amber-600 border-amber-500 bg-amber-50/90'); stampRef.current.textContent = st === 'ver' ? '✓ VERIFICADA' : st === 'rev' ? '⚑ PENDIENTE' : '' } }
