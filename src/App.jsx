@@ -219,39 +219,6 @@ export default function App() {
     refresh()
   }
 
-  /* editor de campos (reutilizado en lista, modal y revisión) */
-  const Fields = useCallback(({ it, compact }) => {
-    const cuadra = cuadraOf(it, marks)
-    const s = marks[it.id] || {}
-    const Row = ({ label, children }) => (
-      <div className="flex items-center justify-between gap-3 py-1.5 border-b border-dashed border-slate-200/70 dark:border-slate-700/50">
-        <span className="text-[13px] text-slate-500 dark:text-slate-400 whitespace-nowrap">{label}</span>{children}
-      </div>
-    )
-    const inp = 'rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 px-2.5 py-1.5 text-sm text-slate-900 dark:text-slate-100 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-200 dark:focus:ring-indigo-500/30 outline-none transition'
-    return (
-      <div className={compact ? '' : 'space-y-0.5'}>
-        <div className="flex flex-wrap items-center gap-1.5 mb-2.5">
-          <span className={'px-2 py-0.5 rounded-md text-[11px] font-semibold ' + (it.conf === 'alta' ? 'bg-emerald-100 text-emerald-700' : it.conf === 'media' ? 'bg-amber-100 text-amber-700' : 'bg-rose-100 text-rose-700')}>confianza {it.conf}</span>
-          <span className={'px-2 py-0.5 rounded-md text-[11px] font-semibold ' + (cuadra ? 'bg-emerald-100 text-emerald-700' : 'bg-rose-100 text-rose-700')}>{cuadra ? '✓ cuadra' : '✗ no cuadra'}</span>
-          {it.flag && <span className="px-2 py-0.5 rounded-md text-[11px] font-semibold bg-orange-100 text-orange-700">⚑ marcada</span>}
-          {s.status === 'ver' && <span className="px-2 py-0.5 rounded-md text-[11px] font-bold bg-emerald-600 text-white">✓ VERIFICADA</span>}
-          {s.status === 'rev' && <span className="px-2 py-0.5 rounded-md text-[11px] font-bold bg-amber-500 text-white">⚑ A REVISAR</span>}
-        </div>
-        <Row label="Fecha"><input type="date" className={inp + ' w-[150px]'} value={isoFromDMY(F(it, marks, 'fecha'))} onChange={e => setField(it.id, 'fecha', e.target.value, false)} /></Row>
-        <Row label="Proveedor"><input className={inp + ' flex-1 min-w-0'} value={F(it, marks, 'proveedor') || ''} onChange={e => setField(it.id, 'proveedor', e.target.value, false)} /></Row>
-        <Row label="Nº factura"><input className={inp + ' flex-1 min-w-0'} value={F(it, marks, 'num') || ''} onChange={e => setField(it.id, 'num', e.target.value, false)} /></Row>
-        <Row label="Base"><input inputMode="decimal" className={inp + ' w-28 text-right tabular-nums'} value={Nv(it, marks, 'base').toFixed(2)} onChange={e => setField(it.id, 'base', e.target.value, true)} /></Row>
-        <Row label={'IVA/IPSI · ' + (it.timp || '')}><input inputMode="decimal" className={inp + ' w-28 text-right tabular-nums'} value={Nv(it, marks, 'iva').toFixed(2)} onChange={e => setField(it.id, 'iva', e.target.value, true)} /></Row>
-        <Row label="Total"><input inputMode="decimal" className={inp + ' w-28 text-right tabular-nums font-semibold'} value={Nv(it, marks, 'total').toFixed(2)} onChange={e => setField(it.id, 'total', e.target.value, true)} /></Row>
-        <div className="pt-2">
-          <span className="text-[13px] text-slate-500 dark:text-slate-400">Observaciones</span>
-          <textarea className={inp + ' w-full mt-1 min-h-[44px] resize-y'} value={F(it, marks, 'obs') || ''} onChange={e => setField(it.id, 'obs', e.target.value, false)} />
-        </div>
-      </div>
-    )
-  }, [marks])
-
   /* export (usa la tanda cargada) */
   const approvedRows = () => [...items].sort((a, b) => isoFromDMY(F(a, marks, 'fecha')) < isoFromDMY(F(b, marks, 'fecha')) ? -1 : 1).map(it => {
     const s = marks[it.id]; const st = s?.status === 'ver' ? 'Verificada' : s?.status === 'rev' ? 'A revisar' : 'Pendiente'
@@ -272,8 +239,8 @@ export default function App() {
       {view === 'stats' &&
         <StatsView onBack={() => setView('dashboard')} />}
       {view === 'list' &&
-        <ListView sel={sel} items={items} marks={marks} Fields={Fields} mark={mark} reset={reset} rotate={rotate} sync={sync} userName={userName}
-          exportXlsx={exportXlsx} copyTable={copyTable} setField={setField} update={update}
+        <ListView sel={sel} items={items} marks={marks} setField={setField} mark={mark} reset={reset} rotate={rotate} sync={sync} userName={userName}
+          exportXlsx={exportXlsx} copyTable={copyTable} update={update}
           onBack={() => { setView('dashboard'); refresh() }} onDelete={() => setConfirm(sel)} />}
 
       {upload && <UploadModal empresas={empresas} userName={userName} onClose={() => setUpload(false)} onDone={() => { setUpload(false); refresh() }} />}
@@ -598,8 +565,43 @@ const Money = ({ label, v, accent }) => (
   </div>
 )
 
+/* ===================== editor de campos (estable, no remonta) ===================== */
+const INP = 'rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 px-2.5 py-1.5 text-sm text-slate-900 dark:text-slate-100 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-200 dark:focus:ring-indigo-500/30 outline-none transition'
+function Row({ label, children }) {
+  return (
+    <div className="flex items-center justify-between gap-3 py-1.5 border-b border-dashed border-slate-200/70 dark:border-slate-700/50">
+      <span className="text-[13px] text-slate-500 dark:text-slate-400 whitespace-nowrap">{label}</span>{children}
+    </div>
+  )
+}
+function Fields({ it, marks, setField, compact }) {
+  const cuadra = cuadraOf(it, marks)
+  const s = marks[it.id] || {}
+  return (
+    <div className={compact ? '' : 'space-y-0.5'}>
+      <div className="flex flex-wrap items-center gap-1.5 mb-2.5">
+        <span className={'px-2 py-0.5 rounded-md text-[11px] font-semibold ' + (it.conf === 'alta' ? 'bg-emerald-100 text-emerald-700' : it.conf === 'media' ? 'bg-amber-100 text-amber-700' : 'bg-rose-100 text-rose-700')}>confianza {it.conf}</span>
+        <span className={'px-2 py-0.5 rounded-md text-[11px] font-semibold ' + (cuadra ? 'bg-emerald-100 text-emerald-700' : 'bg-rose-100 text-rose-700')}>{cuadra ? '✓ cuadra' : '✗ no cuadra'}</span>
+        {it.flag && <span className="px-2 py-0.5 rounded-md text-[11px] font-semibold bg-orange-100 text-orange-700">⚑ marcada</span>}
+        {s.status === 'ver' && <span className="px-2 py-0.5 rounded-md text-[11px] font-bold bg-emerald-600 text-white">✓ VERIFICADA</span>}
+        {s.status === 'rev' && <span className="px-2 py-0.5 rounded-md text-[11px] font-bold bg-amber-500 text-white">⚑ A REVISAR</span>}
+      </div>
+      <Row label="Fecha"><input type="date" className={INP + ' w-[150px]'} value={isoFromDMY(F(it, marks, 'fecha'))} onChange={e => setField(it.id, 'fecha', e.target.value, false)} /></Row>
+      <Row label="Proveedor"><input className={INP + ' flex-1 min-w-0'} value={F(it, marks, 'proveedor') || ''} onChange={e => setField(it.id, 'proveedor', e.target.value, false)} /></Row>
+      <Row label="Nº factura"><input className={INP + ' flex-1 min-w-0'} value={F(it, marks, 'num') || ''} onChange={e => setField(it.id, 'num', e.target.value, false)} /></Row>
+      <Row label="Base"><input inputMode="decimal" className={INP + ' w-28 text-right tabular-nums'} value={Nv(it, marks, 'base').toFixed(2)} onChange={e => setField(it.id, 'base', e.target.value, true)} /></Row>
+      <Row label={'IVA/IPSI · ' + (it.timp || '')}><input inputMode="decimal" className={INP + ' w-28 text-right tabular-nums'} value={Nv(it, marks, 'iva').toFixed(2)} onChange={e => setField(it.id, 'iva', e.target.value, true)} /></Row>
+      <Row label="Total"><input inputMode="decimal" className={INP + ' w-28 text-right tabular-nums font-semibold'} value={Nv(it, marks, 'total').toFixed(2)} onChange={e => setField(it.id, 'total', e.target.value, true)} /></Row>
+      <div className="pt-2">
+        <span className="text-[13px] text-slate-500 dark:text-slate-400">Observaciones</span>
+        <textarea className={INP + ' w-full mt-1 min-h-[44px] resize-y'} value={F(it, marks, 'obs') || ''} onChange={e => setField(it.id, 'obs', e.target.value, false)} />
+      </div>
+    </div>
+  )
+}
+
 /* ===================== LISTA (una tanda) ===================== */
-function ListView({ sel, items, marks, Fields, mark, reset, rotate, sync, userName, exportXlsx, copyTable, onBack, onDelete }) {
+function ListView({ sel, items, marks, setField, mark, reset, rotate, sync, userName, exportXlsx, copyTable, onBack, onDelete }) {
   const [filter, setFilter] = useState('todas')
   const [q, setQ] = useState('')
   const [modalId, setModalId] = useState(null)
@@ -662,20 +664,20 @@ function ListView({ sel, items, marks, Fields, mark, reset, rotate, sync, userNa
       <div className="mx-auto max-w-5xl px-4 py-5 space-y-4">
         {items.length === 0 && <p className="text-slate-400 py-10 text-center">Cargando facturas…</p>}
         {items.length > 0 && visible.length === 0 && <p className="text-slate-400 py-10 text-center">Sin resultados para este filtro.</p>}
-        {visible.map(it => <InvoiceCard key={it.id} it={it} marks={marks} Fields={Fields} mark={mark} reset={reset} rotate={rotate} onZoom={() => setModalId(it.id)} />)}
+        {visible.map(it => <InvoiceCard key={it.id} it={it} marks={marks} setField={setField} mark={mark} reset={reset} rotate={rotate} onZoom={() => setModalId(it.id)} />)}
       </div>
 
       {/* botón flotante de revisión en móvil */}
       <button onClick={() => setReview(true)} className="sm:hidden fixed right-4 bottom-4 z-30 flex items-center gap-2 px-5 py-3.5 rounded-full brand-grad text-white font-semibold shadow-xl shadow-indigo-600/40 active:scale-95 transition"><Icon d={I.play} className="w-5 h-5" /> Revisar</button>
 
-      {modalId && <Modal it={items.find(x => x.id === modalId)} marks={marks} onClose={() => setModalId(null)} onRotate={rotate} Fields={Fields} mark={mark} />}
-      {review && <ReviewMode items={ordered} marks={marks} setReview={setReview} mark={mark} rotate={rotate} Fields={Fields} exportXlsx={exportXlsx} userName={userName} />}
+      {modalId && <Modal it={items.find(x => x.id === modalId)} marks={marks} setField={setField} onClose={() => setModalId(null)} onRotate={rotate} mark={mark} />}
+      {review && <ReviewMode items={ordered} marks={marks} setField={setField} setReview={setReview} mark={mark} rotate={rotate} exportXlsx={exportXlsx} userName={userName} />}
       {showDone && <DoneOverlay ver={ver} total={items.length} userName={userName} onExport={exportXlsx} onClose={() => setShowDone(false)} onBack={onBack} />}
     </div>
   )
 }
 
-function InvoiceCard({ it, marks, Fields, mark, reset, rotate, onZoom }) {
+function InvoiceCard({ it, marks, setField, mark, reset, rotate, onZoom }) {
   const s = marks[it.id] || {}
   const done = s.status === 'ver'
   return (
@@ -689,7 +691,7 @@ function InvoiceCard({ it, marks, Fields, mark, reset, rotate, onZoom }) {
       </div>
       <div className="p-4">
         <div className="text-base font-bold text-slate-900 dark:text-slate-100 mb-0.5">{F(it, marks, 'proveedor') || '—'}</div>
-        <Fields it={it} />
+        <Fields it={it} marks={marks} setField={setField} />
         <div className="flex flex-wrap gap-2 mt-3">
           <button onClick={() => mark(it.id, 'ver')} className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-emerald-600 text-white text-sm font-semibold hover:bg-emerald-700 transition"><Icon d={I.check} className="w-4 h-4" /> Verificado</button>
           <button onClick={() => mark(it.id, 'rev')} className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-amber-500 text-white text-sm font-semibold hover:bg-amber-600 transition"><Icon d={I.flag} className="w-4 h-4" /> A revisar</button>
@@ -701,7 +703,7 @@ function InvoiceCard({ it, marks, Fields, mark, reset, rotate, onZoom }) {
 }
 
 /* ===================== MODAL zoom ===================== */
-function Modal({ it, marks, onClose, onRotate, Fields, mark }) {
+function Modal({ it, marks, setField, onClose, onRotate, mark }) {
   const [z, setZ] = useState(1)
   return (
     <div className="fixed inset-0 z-50 bg-slate-950/95 flex flex-col md:grid md:grid-cols-[1fr_380px]">
@@ -715,7 +717,7 @@ function Modal({ it, marks, onClose, onRotate, Fields, mark }) {
           <button onClick={() => setZ(z * 0.8)} className="grid place-items-center w-10 h-10 rounded-lg border border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800"><Icon d={I.zoomOut} /></button>
           <button onClick={() => onRotate(it.id)} className="grid place-items-center w-10 h-10 rounded-lg border border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800"><Icon d={I.rotate} /></button>
         </div>
-        <Fields it={it} />
+        <Fields it={it} marks={marks} setField={setField} />
         <div className="flex gap-2 mt-4">
           <button onClick={() => mark(it.id, 'ver')} className="flex-1 flex items-center justify-center gap-1.5 py-3 rounded-xl bg-emerald-600 text-white font-semibold"><Icon d={I.check} className="w-4 h-4" /> Verificado</button>
           <button onClick={() => mark(it.id, 'rev')} className="flex-1 flex items-center justify-center gap-1.5 py-3 rounded-xl bg-amber-500 text-white font-semibold"><Icon d={I.flag} className="w-4 h-4" /> A revisar</button>
@@ -726,7 +728,7 @@ function Modal({ it, marks, onClose, onRotate, Fields, mark }) {
 }
 
 /* ===================== MODO REVISIÓN (Tinder) ===================== */
-function ReviewMode({ items, marks, setReview, mark, rotate, Fields, exportXlsx, userName }) {
+function ReviewMode({ items, marks, setField, setReview, mark, rotate, exportXlsx, userName }) {
   const [idx, setIdx] = useState(0)
   const [done, setDone] = useState(false)
   const [sheet, setSheet] = useState(false)   // bottom sheet de datos (móvil)
@@ -899,7 +901,7 @@ function ReviewMode({ items, marks, setReview, mark, rotate, Fields, exportXlsx,
         <div className="hidden md:flex flex-col bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100 border-l border-slate-200 dark:border-slate-800 overflow-hidden">
           <div className="flex-1 overflow-auto thin-sb p-5">
             <div className="text-lg font-bold mb-2">{F(it, marks, 'proveedor') || '—'}</div>
-            <Fields it={it} />
+            <Fields it={it} marks={marks} setField={setField} />
           </div>
           <div className="flex gap-3 p-4 border-t border-slate-200 dark:border-slate-800">
             <button onClick={() => doMark('ver')} className="flex-1 py-4 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold flex items-center justify-center gap-2"><Icon d={I.check} /> Verificar</button>
@@ -928,7 +930,7 @@ function ReviewMode({ items, marks, setReview, mark, rotate, Fields, exportXlsx,
               <div className="text-base font-bold truncate">{F(it, marks, 'proveedor') || '—'}</div>
               <button onClick={() => setSheet(false)} className="grid place-items-center w-8 h-8 rounded-lg bg-slate-100 dark:bg-slate-800"><Icon d={I.x} className="w-4 h-4" /></button>
             </div>
-            <div className="flex-1 overflow-auto thin-sb px-5 pb-4"><Fields it={it} /></div>
+            <div className="flex-1 overflow-auto thin-sb px-5 pb-4"><Fields it={it} marks={marks} setField={setField} /></div>
           </div>
         </div>
       )}
