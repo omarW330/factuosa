@@ -100,6 +100,25 @@ export async function listJobs() {
   return data
 }
 
+/* memoria de correcciones de proveedor (aprendizaje) */
+export const normProv = s => String(s || '').trim().replace(/\s+/g, ' ').toUpperCase()
+export async function loadAliases() {
+  if (!sb) return {}
+  const { data, error } = await sb.from('proveedores_alias').select('original, corregido')
+  if (error || !data) return {}
+  const out = {}; for (const r of data) out[r.original] = r.corregido; return out
+}
+export async function saveAlias(originalRaw, corregido) {
+  if (!sb) return false
+  const original = normProv(originalRaw)
+  if (!original || !corregido || normProv(corregido) === original) return false
+  const { error } = await sb.from('proveedores_alias').upsert(
+    { original, muestra: originalRaw, corregido, updated_at: new Date().toISOString() },
+    { onConflict: 'original' }
+  )
+  return !error
+}
+
 export async function createJob({ empresa, n_facturas = 0, estado = 'en_cola' }) {
   if (!sb) return null
   const { data, error } = await sb.from('jobs').insert({ empresa, n_facturas, estado }).select().single()
