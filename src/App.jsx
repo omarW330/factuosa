@@ -15,6 +15,20 @@ const dmyFromIso = s => { const p = String(s).split('-'); return p.length === 3 
 const fmtT = ms => { const s = Math.floor(ms / 1000); return String(Math.floor(s / 60)).padStart(2, '0') + ':' + String(s % 60).padStart(2, '0') }
 const eur = n => Number(n || 0).toLocaleString('es-ES', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' €'
 const cuadraOf = (it, m) => Math.abs((Nv(it, m, 'base') + Nv(it, m, 'iva')) - Nv(it, m, 'total')) <= 0.02
+const norm = s => String(s || '').trim().replace(/\s+/g, ' ').toUpperCase()
+// Set de ids de facturas que parecen duplicadas (mismo proveedor+nº, o mismo total+fecha)
+const dupSetFrom = rows => {
+  const byKey = {}; const add = (k, id) => { if (k) (byKey[k] = byKey[k] || []).push(id) }
+  for (const r of (rows || [])) {
+    const num = norm(r.num)
+    if (num) add('N|' + norm(r.proveedor) + '|' + num, r.id)
+    const t = r.total != null ? Number(r.total).toFixed(2) : ''
+    if (t && t !== '0.00') add('T|' + t + '|' + (r.fecha || ''), r.id)
+  }
+  const dup = new Set()
+  for (const k in byKey) if (byKey[k].length > 1) byKey[k].forEach(id => dup.add(id))
+  return dup
+}
 
 /* ---------- localStorage seguro (Safari bloquea en file://) ---------- */
 const lsGet = (k, fb) => { try { return JSON.parse(localStorage.getItem(k) || '') ?? fb } catch (e) { return fb } }
@@ -59,6 +73,11 @@ const I = {
   sun: <><circle cx="12" cy="12" r="4" /><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4" /></>,
   moon: <path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z" />,
   spark: <path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8z" />,
+  camera: <><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z" /><circle cx="12" cy="13" r="4" /></>,
+  files: <><path d="M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z" /><path d="M13 2v7h7" /></>,
+  copies: <><path d="M8 4h10a2 2 0 0 1 2 2v10" /><rect x="4" y="8" width="12" height="12" rx="2" /></>,
+  wand: <><path d="M15 4V2M15 10V8M11 6H9M21 6h-2M18.5 3.5l-1.4 1.4M18.5 8.5l-1.4-1.4M4 20l9-9" /></>,
+  alert: <><path d="M12 9v4M12 17h.01" /><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z" /></>,
 }
 
 function ThemeToggle({ theme, onToggle, className = '' }) {
@@ -177,6 +196,7 @@ export default function App() {
   const [loaded, setLoaded] = useState(false)         // datos del panel cargados
   const [itemsLoading, setItemsLoading] = useState(false)
   const [aliases, setAliases] = useState({})          // memoria de correcciones de proveedor
+  const [dupSet, setDupSet] = useState(() => new Set()) // facturas posibles duplicadas
   const cacheKeyRef = useRef('')
   const saveTimers = useRef({})
 
@@ -194,8 +214,8 @@ export default function App() {
   /* jobs + stats + latido + empresas (Supabase, requiere sesión) */
   const refresh = useCallback(async () => {
     if (!syncEnabled) return
-    const [j, s, hb, emp, al] = await Promise.all([listJobs(), loadJobStats(), loadStatus(), listEmpresas(), loadAliases()])
-    if (j) setJobs(j); setStats(s || {}); setHeartbeat(hb); setEmpresas(emp || []); setAliases(al || {}); setLoaded(true)
+    const [j, s, hb, emp, al, allF] = await Promise.all([listJobs(), loadJobStats(), loadStatus(), listEmpresas(), loadAliases(), loadAllFacturas()])
+    if (j) setJobs(j); setStats(s || {}); setHeartbeat(hb); setEmpresas(emp || []); setAliases(al || {}); setDupSet(dupSetFrom(allF)); setLoaded(true)
   }, [])
   /* aprende una corrección de proveedor (original IA → corregido) */
   const onAlias = useCallback((origRaw, corr) => {
@@ -251,11 +271,11 @@ export default function App() {
   }
 
   /* export (usa la tanda cargada) */
-  const approvedRows = () => [...items].sort((a, b) => isoFromDMY(F(a, marks, 'fecha')) < isoFromDMY(F(b, marks, 'fecha')) ? -1 : 1).map(it => {
+  const approvedRows = (onlyVer) => [...items].filter(it => !onlyVer || marks[it.id]?.status === 'ver').sort((a, b) => isoFromDMY(F(a, marks, 'fecha')) < isoFromDMY(F(b, marks, 'fecha')) ? -1 : 1).map(it => {
     const s = marks[it.id]; const st = s?.status === 'ver' ? 'Verificada' : s?.status === 'rev' ? 'A revisar' : 'Pendiente'
     return { fecha: F(it, marks, 'fecha'), proveedor: F(it, marks, 'proveedor'), num: F(it, marks, 'num'), base: Nv(it, marks, 'base'), iva: Nv(it, marks, 'iva'), total: Nv(it, marks, 'total'), estado: st, obs: F(it, marks, 'obs'), amber: s?.status === 'rev' || it.flag }
   })
-  const exportXlsx = () => { const blob = buildXlsx(approvedRows()); const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = (sel?.empresa || 'AGM') + '_revisado.xlsx'; a.click(); URL.revokeObjectURL(a.href) }
+  const exportXlsx = (onlyVer) => { const blob = buildXlsx(approvedRows(onlyVer === true)); const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = (sel?.empresa || 'AGM') + (onlyVer === true ? '_verificadas' : '_revisado') + '.xlsx'; a.click(); URL.revokeObjectURL(a.href) }
   const copyTable = async () => { try { await navigator.clipboard.writeText(tsvTable(approvedRows())); alert(`${cheer(userName)} Tabla copiada, pégala en Excel.`) } catch (e) { alert('No se pudo copiar automáticamente.') } }
 
   if (syncEnabled && !authReady) return <div className="min-h-full grid place-items-center text-slate-400">Cargando…</div>
@@ -271,7 +291,7 @@ export default function App() {
         <StatsView onBack={() => setView('dashboard')} />}
       {view === 'list' &&
         <ListView sel={sel} items={items} marks={marks} setField={setField} mark={mark} reset={reset} rotate={rotate} sync={sync} userName={userName} itemsLoading={itemsLoading}
-          aliases={aliases} onAlias={onAlias} exportXlsx={exportXlsx} copyTable={copyTable} update={update}
+          aliases={aliases} onAlias={onAlias} dupSet={dupSet} exportXlsx={exportXlsx} copyTable={copyTable} update={update}
           onBack={() => { setView('dashboard'); refresh() }} onDelete={() => setConfirm(sel)} />}
 
       {upload && <UploadModal empresas={empresas} userName={userName} onClose={() => setUpload(false)} onDone={() => { setUpload(false); refresh() }} />}
@@ -464,6 +484,7 @@ function UploadModal({ empresas, userName, onClose, onDone }) {
   const [busy, setBusy] = useState(false)
   const [prog, setProg] = useState([0, 0])
   const [done, setDone] = useState(false)
+  const addFiles = list => setFiles(prev => { const m = new Map(prev.map(f => [f.name + f.size, f])); for (const f of list) m.set(f.name + f.size, f); return [...m.values()] })
   useEffect(() => { if (!emp && empresas.length) setEmp(empresas[0].id) }, [empresas])
   const submit = async () => {
     if (!emp || !files.length) return
@@ -494,9 +515,18 @@ function UploadModal({ empresas, userName, onClose, onDone }) {
             {empresas.map(e => <option key={e.id} value={e.id}>{e.nombre || e.id}</option>)}
           </select>
 
-          <label className="block text-[13px] font-medium text-slate-600 dark:text-slate-300 dark:text-slate-300 mt-4 mb-1">Ficheros</label>
-          <input type="file" multiple accept="image/*,application/pdf" onChange={e => setFiles([...e.target.files])} className="w-full text-sm text-slate-600 dark:text-slate-300 dark:text-slate-300 file:mr-3 file:py-2 file:px-3 file:rounded-lg file:border-0 file:bg-indigo-50 dark:file:bg-indigo-500/20 file:text-indigo-700 dark:file:text-indigo-300 file:font-semibold" />
-          {files.length > 0 && <p className="text-[12px] text-slate-500 dark:text-slate-400 mt-1.5">{files.length} fichero(s) seleccionado(s)</p>}
+          <label className="block text-[13px] font-medium text-slate-600 dark:text-slate-300 mt-4 mb-1">Facturas</label>
+          <div className="grid grid-cols-2 gap-2">
+            <label className="cursor-pointer flex items-center justify-center gap-1.5 py-2.5 rounded-xl border border-slate-300 dark:border-slate-700 text-sm font-semibold text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800 transition">
+              <Icon d={I.camera} className="w-4 h-4" /> Hacer fotos
+              <input type="file" accept="image/*" capture="environment" multiple className="hidden" onChange={e => addFiles([...e.target.files])} />
+            </label>
+            <label className="cursor-pointer flex items-center justify-center gap-1.5 py-2.5 rounded-xl border border-slate-300 dark:border-slate-700 text-sm font-semibold text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800 transition">
+              <Icon d={I.files} className="w-4 h-4" /> Elegir
+              <input type="file" accept="image/*,application/pdf" multiple className="hidden" onChange={e => addFiles([...e.target.files])} />
+            </label>
+          </div>
+          {files.length > 0 && <p className="text-[12px] text-slate-500 dark:text-slate-400 mt-1.5">{files.length} fichero(s) · <button type="button" onClick={() => setFiles([])} className="underline hover:text-rose-600">vaciar</button></p>}
 
           {busy && <div className="mt-4"><div className="h-2 rounded-full bg-slate-100 dark:bg-slate-800 overflow-hidden"><div className="h-full bg-indigo-500 transition-all" style={{ width: (prog[1] ? (prog[0] / prog[1]) * 100 : 0) + '%' }} /></div><p className="text-[12px] text-slate-500 dark:text-slate-400 mt-1">Subiendo {prog[0]}/{prog[1]}…</p></div>}
 
@@ -624,18 +654,33 @@ function Row({ label, children }) {
     </div>
   )
 }
-function Fields({ it, marks, setField, aliases, onAlias, compact }) {
+function Fields({ it, marks, setField, aliases, onAlias, dup, compact }) {
   const cuadra = cuadraOf(it, marks)
   const s = marks[it.id] || {}
   const provVal = F(it, marks, 'proveedor') || ''
   const sug = aliases ? aliases[normProv(it.proveedor)] : null
   const showSug = sug && sug !== provVal && provVal === (it.proveedor || '')   // original sin tocar y hay corrección aprendida
   const saveProvAlias = () => { const v = F(it, marks, 'proveedor'); if (onAlias && v && v !== it.proveedor) onAlias(it.proveedor, v) }
+  const cuadrar = () => {
+    const base = Nv(it, marks, 'base'), iva = Nv(it, marks, 'iva')
+    const m = String(it.timp || '').match(/(\d+(?:[.,]\d+)?)\s*%/)
+    if (m && base > 0) {           // hay % → recalcula IVA desde la base y total = base+IVA
+      const pct = parseFloat(m[1].replace(',', '.'))
+      const niva = Math.round(base * pct) / 100
+      setField(it.id, 'iva', niva.toFixed(2), true)
+      setField(it.id, 'total', (base + niva).toFixed(2), true)
+    } else {                       // sin % → total = base + IVA
+      setField(it.id, 'total', (base + iva).toFixed(2), true)
+    }
+  }
   return (
     <div className={compact ? '' : 'space-y-0.5'}>
       <div className="flex flex-wrap items-center gap-1.5 mb-2.5">
         <span className={'px-2 py-0.5 rounded-md text-[11px] font-semibold ' + (it.conf === 'alta' ? 'bg-emerald-100 text-emerald-700' : it.conf === 'media' ? 'bg-amber-100 text-amber-700' : 'bg-rose-100 text-rose-700')}>confianza {it.conf}</span>
-        <span className={'px-2 py-0.5 rounded-md text-[11px] font-semibold ' + (cuadra ? 'bg-emerald-100 text-emerald-700' : 'bg-rose-100 text-rose-700')}>{cuadra ? '✓ cuadra' : '✗ no cuadra'}</span>
+        {cuadra
+          ? <span className="px-2 py-0.5 rounded-md text-[11px] font-semibold bg-emerald-100 text-emerald-700">✓ cuadra</span>
+          : <button type="button" onClick={cuadrar} title="Ajustar IVA/total para que cuadre" className="px-2 py-0.5 rounded-md text-[11px] font-semibold bg-rose-100 text-rose-700 hover:bg-rose-200 flex items-center gap-1 transition"><Icon d={I.wand} className="w-3 h-3" /> no cuadra · ajustar</button>}
+        {dup && <span className="px-2 py-0.5 rounded-md text-[11px] font-semibold bg-rose-100 text-rose-700 flex items-center gap-1" title="Otra factura tiene el mismo proveedor+nº o total+fecha"><Icon d={I.copies} className="w-3 h-3" /> posible duplicado</span>}
         {it.flag && <span className="px-2 py-0.5 rounded-md text-[11px] font-semibold bg-orange-100 text-orange-700">⚑ marcada</span>}
         {s.status === 'ver' && <span className="px-2 py-0.5 rounded-md text-[11px] font-bold bg-emerald-600 text-white">✓ VERIFICADA</span>}
         {s.status === 'rev' && <span className="px-2 py-0.5 rounded-md text-[11px] font-bold bg-amber-500 text-white">⚑ A REVISAR</span>}
@@ -661,7 +706,7 @@ function Fields({ it, marks, setField, aliases, onAlias, compact }) {
 }
 
 /* ===================== LISTA (una tanda) ===================== */
-function ListView({ sel, items, marks, setField, mark, reset, rotate, sync, userName, itemsLoading, aliases, onAlias, exportXlsx, copyTable, onBack, onDelete }) {
+function ListView({ sel, items, marks, setField, mark, reset, rotate, sync, userName, itemsLoading, aliases, onAlias, dupSet, exportXlsx, copyTable, onBack, onDelete }) {
   const [filter, setFilter] = useState('todas')
   const [q, setQ] = useState('')
   const [modalId, setModalId] = useState(null)
@@ -679,6 +724,8 @@ function ListView({ sel, items, marks, setField, mark, reset, rotate, sync, user
   const faltan = Math.max(0, subidas - items.length)
   const autoOk = items.filter(it => cuadraOf(it, marks) && it.conf === 'alta' && marks[it.id]?.status !== 'ver')
   const quickVerify = () => { if (autoOk.length && window.confirm(`Verificar ${autoOk.length} factura(s) que cuadran y son de confianza alta?`)) autoOk.forEach(it => mark(it.id, 'ver')) }
+  const needsAttn = it => !cuadraOf(it, marks) || it.conf === 'baja' || it.flag || !F(it, marks, 'num') || Nv(it, marks, 'total') <= 0 || (dupSet && dupSet.has(it.id))
+  const atnCount = items.filter(needsAttn).length
 
   const ordered = [...items].sort((a, b) => rank(a, marks) - rank(b, marks))
   const ql = q.trim().toLowerCase()
@@ -687,6 +734,7 @@ function ListView({ sel, items, marks, setField, mark, reset, rotate, sync, user
     if (filter === 'pend' && s === 'ver') return false
     if (filter === 'ver' && s !== 'ver') return false
     if (filter === 'flag' && !(it.flag || s === 'rev')) return false
+    if (filter === 'aten' && !needsAttn(it)) return false
     if (ql) { const hay = [F(it, marks, 'proveedor'), F(it, marks, 'num'), F(it, marks, 'obs')].join(' ').toLowerCase(); if (!hay.includes(ql)) return false }
     return true
   })
@@ -713,7 +761,8 @@ function ListView({ sel, items, marks, setField, mark, reset, rotate, sync, user
             <div className="ml-auto flex items-center gap-2">
               <button onClick={() => setReview(true)} className="hidden sm:flex items-center gap-1.5 px-3.5 py-2 rounded-xl brand-grad text-white text-sm font-semibold shadow-lg shadow-indigo-600/30 hover:opacity-90 transition"><Icon d={I.play} className="w-4 h-4" /> Revisar</button>
               <button onClick={copyTable} className="grid place-items-center w-9 h-9 rounded-lg border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 transition" title="Copiar tabla"><Icon d={I.copy} className="w-[18px] h-[18px]" /></button>
-              <button onClick={exportXlsx} className="grid place-items-center w-9 h-9 rounded-lg border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 transition" title="Exportar Excel"><Icon d={I.download} className="w-[18px] h-[18px]" /></button>
+              <button onClick={() => exportXlsx(false)} className="grid place-items-center w-9 h-9 rounded-lg border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 transition" title="Exportar Excel (todas)"><Icon d={I.download} className="w-[18px] h-[18px]" /></button>
+              {ver > 0 && <button onClick={() => exportXlsx(true)} className="grid place-items-center w-9 h-9 rounded-lg border border-emerald-200 dark:border-emerald-500/30 text-emerald-600 dark:text-emerald-400 hover:bg-emerald-50 dark:hover:bg-emerald-500/10 transition" title="Exportar solo verificadas"><Icon d={I.check} className="w-[18px] h-[18px]" /></button>}
               <button onClick={onDelete} className="grid place-items-center w-9 h-9 rounded-lg border border-rose-200 text-rose-500 hover:bg-rose-50 transition" title="Eliminar tanda"><Icon d={I.trash} className="w-[18px] h-[18px]" /></button>
             </div>
           </div>
@@ -722,6 +771,7 @@ function ListView({ sel, items, marks, setField, mark, reset, rotate, sync, user
             <FilterBtn id="pend" label="Pendientes" n={items.length - ver} />
             <FilterBtn id="ver" label="Verificadas" n={ver} />
             <FilterBtn id="flag" label="A revisar" n={rev} />
+            {atnCount > 0 && <button onClick={() => setFilter('aten')} title="Facturas que requieren atención" className={'flex items-center gap-1 px-3 py-1.5 rounded-full text-[13px] font-semibold whitespace-nowrap transition ' + (filter === 'aten' ? 'bg-amber-500 text-white shadow' : 'bg-amber-50 dark:bg-amber-500/15 text-amber-700 dark:text-amber-400 border border-amber-200 dark:border-amber-500/30')}><Icon d={I.alert} className="w-3.5 h-3.5" /> Atención {atnCount}</button>}
             {autoOk.length > 0 && <button onClick={quickVerify} title="Verifica las que cuadran y son de confianza alta" className="flex items-center gap-1 px-3 py-1.5 rounded-full text-[13px] font-semibold whitespace-nowrap bg-emerald-600 text-white hover:bg-emerald-700 transition"><Icon d={I.check} className="w-3.5 h-3.5" /> {autoOk.length} OK</button>}
             <div className="relative ml-auto flex-1 min-w-[140px] max-w-[260px]">
               <Icon d={I.search} className="w-4 h-4 absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
@@ -736,20 +786,20 @@ function ListView({ sel, items, marks, setField, mark, reset, rotate, sync, user
         {itemsLoading && items.length === 0 && [0, 1, 2].map(i => <Skel key={i} className="h-56 sm:h-64" />)}
         {!itemsLoading && items.length === 0 && <p className="text-slate-400 py-10 text-center">{sel?.estado === 'listo' ? 'Este lote no tiene facturas.' : 'El lote aún se está procesando…'}</p>}
         {items.length > 0 && visible.length === 0 && <p className="text-slate-400 py-10 text-center">Sin resultados para este filtro.</p>}
-        {visible.map(it => <InvoiceCard key={it.id} it={it} marks={marks} setField={setField} aliases={aliases} onAlias={onAlias} mark={mark} reset={reset} rotate={rotate} onZoom={() => setModalId(it.id)} />)}
+        {visible.map(it => <InvoiceCard key={it.id} it={it} marks={marks} setField={setField} aliases={aliases} onAlias={onAlias} dup={dupSet && dupSet.has(it.id)} mark={mark} reset={reset} rotate={rotate} onZoom={() => setModalId(it.id)} />)}
       </div>
 
       {/* botón flotante de revisión en móvil */}
       <button onClick={() => setReview(true)} className="sm:hidden fixed right-4 bottom-4 z-30 flex items-center gap-2 px-5 py-3.5 rounded-full brand-grad text-white font-semibold shadow-xl shadow-indigo-600/40 active:scale-95 transition"><Icon d={I.play} className="w-5 h-5" /> Revisar</button>
 
-      {modalId && <Modal it={items.find(x => x.id === modalId)} marks={marks} setField={setField} aliases={aliases} onAlias={onAlias} onClose={() => setModalId(null)} onRotate={rotate} mark={mark} />}
-      {review && <ReviewMode items={ordered} marks={marks} setField={setField} aliases={aliases} onAlias={onAlias} setReview={setReview} mark={mark} rotate={rotate} exportXlsx={exportXlsx} userName={userName} />}
+      {modalId && <Modal it={items.find(x => x.id === modalId)} marks={marks} setField={setField} aliases={aliases} onAlias={onAlias} dup={dupSet && dupSet.has(modalId)} onClose={() => setModalId(null)} onRotate={rotate} mark={mark} />}
+      {review && <ReviewMode items={ordered} marks={marks} setField={setField} aliases={aliases} onAlias={onAlias} dupSet={dupSet} setReview={setReview} mark={mark} rotate={rotate} exportXlsx={exportXlsx} userName={userName} />}
       {showDone && <DoneOverlay ver={ver} total={items.length} userName={userName} onExport={exportXlsx} onClose={() => setShowDone(false)} onBack={onBack} />}
     </div>
   )
 }
 
-function InvoiceCard({ it, marks, setField, aliases, onAlias, mark, reset, rotate, onZoom }) {
+function InvoiceCard({ it, marks, setField, aliases, onAlias, dup, mark, reset, rotate, onZoom }) {
   const s = marks[it.id] || {}
   const done = s.status === 'ver'
   return (
@@ -763,7 +813,7 @@ function InvoiceCard({ it, marks, setField, aliases, onAlias, mark, reset, rotat
       </div>
       <div className="p-4">
         <div className="text-base font-bold text-slate-900 dark:text-slate-100 mb-0.5">{F(it, marks, 'proveedor') || '—'}</div>
-        <Fields it={it} marks={marks} setField={setField} aliases={aliases} onAlias={onAlias} />
+        <Fields it={it} marks={marks} setField={setField} aliases={aliases} onAlias={onAlias} dup={dup} />
         <div className="flex flex-wrap gap-2 mt-3">
           <button onClick={() => mark(it.id, 'ver')} className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-emerald-600 text-white text-sm font-semibold hover:bg-emerald-700 transition"><Icon d={I.check} className="w-4 h-4" /> Verificado</button>
           <button onClick={() => mark(it.id, 'rev')} className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-amber-500 text-white text-sm font-semibold hover:bg-amber-600 transition"><Icon d={I.flag} className="w-4 h-4" /> A revisar</button>
@@ -775,7 +825,7 @@ function InvoiceCard({ it, marks, setField, aliases, onAlias, mark, reset, rotat
 }
 
 /* ===================== MODAL zoom ===================== */
-function Modal({ it, marks, setField, aliases, onAlias, onClose, onRotate, mark }) {
+function Modal({ it, marks, setField, aliases, onAlias, dup, onClose, onRotate, mark }) {
   const [z, setZ] = useState(1)
   return (
     <div className="fixed inset-0 z-50 bg-slate-950/95 flex flex-col md:grid md:grid-cols-[1fr_380px]">
@@ -789,7 +839,7 @@ function Modal({ it, marks, setField, aliases, onAlias, onClose, onRotate, mark 
           <button onClick={() => setZ(z * 0.8)} className="grid place-items-center w-10 h-10 rounded-lg border border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800"><Icon d={I.zoomOut} /></button>
           <button onClick={() => onRotate(it.id)} className="grid place-items-center w-10 h-10 rounded-lg border border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800"><Icon d={I.rotate} /></button>
         </div>
-        <Fields it={it} marks={marks} setField={setField} aliases={aliases} onAlias={onAlias} />
+        <Fields it={it} marks={marks} setField={setField} aliases={aliases} onAlias={onAlias} dup={dup} />
         <div className="flex gap-2 mt-4">
           <button onClick={() => mark(it.id, 'ver')} className="flex-1 flex items-center justify-center gap-1.5 py-3 rounded-xl bg-emerald-600 text-white font-semibold"><Icon d={I.check} className="w-4 h-4" /> Verificado</button>
           <button onClick={() => mark(it.id, 'rev')} className="flex-1 flex items-center justify-center gap-1.5 py-3 rounded-xl bg-amber-500 text-white font-semibold"><Icon d={I.flag} className="w-4 h-4" /> A revisar</button>
@@ -800,7 +850,7 @@ function Modal({ it, marks, setField, aliases, onAlias, onClose, onRotate, mark 
 }
 
 /* ===================== MODO REVISIÓN (Tinder) ===================== */
-function ReviewMode({ items, marks, setField, aliases, onAlias, setReview, mark, rotate, exportXlsx, userName }) {
+function ReviewMode({ items, marks, setField, aliases, onAlias, dupSet, setReview, mark, rotate, exportXlsx, userName }) {
   const [idx, setIdx] = useState(0)
   const [done, setDone] = useState(false)
   const [sheet, setSheet] = useState(false)   // bottom sheet de datos (móvil)
@@ -973,7 +1023,7 @@ function ReviewMode({ items, marks, setField, aliases, onAlias, setReview, mark,
         <div className="hidden md:flex flex-col bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100 border-l border-slate-200 dark:border-slate-800 overflow-hidden">
           <div className="flex-1 overflow-auto thin-sb p-5">
             <div className="text-lg font-bold mb-2">{F(it, marks, 'proveedor') || '—'}</div>
-            <Fields it={it} marks={marks} setField={setField} aliases={aliases} onAlias={onAlias} />
+            <Fields it={it} marks={marks} setField={setField} aliases={aliases} onAlias={onAlias} dup={dupSet && dupSet.has(it.id)} />
           </div>
           <div className="flex gap-3 p-4 border-t border-slate-200 dark:border-slate-800">
             <button onClick={() => doMark('ver')} className="flex-1 py-4 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold flex items-center justify-center gap-2"><Icon d={I.check} /> Verificar</button>
@@ -1004,7 +1054,7 @@ function ReviewMode({ items, marks, setField, aliases, onAlias, setReview, mark,
               <div className="text-base font-bold truncate">{F(it, marks, 'proveedor') || '—'}</div>
               <button onClick={() => setSheet(false)} className="grid place-items-center w-8 h-8 rounded-lg bg-slate-100 dark:bg-slate-800"><Icon d={I.x} className="w-4 h-4" /></button>
             </div>
-            <div className="flex-1 overflow-auto thin-sb px-5 pb-4"><Fields it={it} marks={marks} setField={setField} aliases={aliases} onAlias={onAlias} /></div>
+            <div className="flex-1 overflow-auto thin-sb px-5 pb-4"><Fields it={it} marks={marks} setField={setField} aliases={aliases} onAlias={onAlias} dup={dupSet && dupSet.has(it.id)} /></div>
           </div>
         </div>
       )}
