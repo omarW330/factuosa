@@ -1,4 +1,11 @@
 CLAUDE.md — Contexto del proyecto (AGM · Revisión de facturas)
+
+⚠️ DESACTUALIZADO: este documento describe la v1 (datos en public/data, marcas en
+localStorage, sync por GitHub Action). La app está ahora en **v2**: la fuente de verdad es
+**Supabase** (tablas jobs/facturas/revisiones/status + Storage), con login, subida desde la
+app y dos relays a Dropbox para Cowork. Lee primero **docs/ESTADO-v2.md** y el **README.md**.
+Lo de abajo se conserva solo como referencia histórica.
+
 Léeme antes de tocar nada. Resume qué es, cómo fluyen los datos, qué archivos importan y qué convenciones NO romper.
 1. Qué es
 Web estática (React + Vite) para revisar facturas a mano: foto a un lado, datos extraídos al otro. Sirve para validar lo que un proceso automático (lectura de tickets con IA) extrajo de cada factura, corregir lo que haga falta y exportar el resultado.
