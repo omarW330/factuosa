@@ -937,10 +937,8 @@ function ReviewMode({ items, marks, setField, setReview, mark, rotate, exportXls
           <div className="absolute inset-0 bg-black/40" />
           <div className="absolute inset-x-0 bottom-0 h-[88vh] rounded-t-3xl bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100 flex flex-col card-in safe-b" onClick={e => e.stopPropagation()}>
             <div className="pt-2.5 pb-1 grid place-items-center shrink-0"><div className="w-10 h-1.5 rounded-full bg-slate-300 dark:bg-slate-600" /></div>
-            {/* foto del ticket: visible y desplazable mientras editas */}
-            <div className="shrink-0 mx-3 mb-2 rounded-xl overflow-auto bg-slate-900 thin-sb" style={{ height: '30vh' }}>
-              <img src={it.img} alt="" draggable="false" className={(rotOf(it, marks) % 180 ? 'h-full mx-auto' : 'w-full') + ' block select-none'} style={{ transform: `rotate(${rotOf(it, marks)}deg)`, transformOrigin: 'center' }} />
-            </div>
+            {/* foto del ticket: visible mientras editas (pinch / doble toque / botones) */}
+            <SheetPreview src={it.img} rot={rotOf(it, marks)} />
             <div className="flex items-center justify-between px-5 pb-2 shrink-0">
               <div className="text-base font-bold truncate">{F(it, marks, 'proveedor') || '—'}</div>
               <button onClick={() => setSheet(false)} className="grid place-items-center w-8 h-8 rounded-lg bg-slate-100 dark:bg-slate-800"><Icon d={I.x} className="w-4 h-4" /></button>
@@ -955,6 +953,59 @@ function ReviewMode({ items, marks, setField, setReview, mark, rotate, exportXls
 const CtrlBtn = ({ d, onClick }) => (
   <button onClick={onClick} className="grid place-items-center w-12 h-12 rounded-2xl bg-white/95 text-slate-700 dark:text-slate-200 shadow-lg hover:bg-white active:scale-95 transition"><Icon d={d} /></button>
 )
+
+/* previsualizador de la foto en la hoja de edición (móvil): pinch / doble toque / botones */
+function SheetPreview({ src, rot }) {
+  const wrapRef = useRef(null), imgRef = useRef(null)
+  const tf = useRef({ tx: 0, ty: 0, sc: 1, fit: 1 })
+  const apply = () => { const t = tf.current, im = imgRef.current; if (im) im.style.transform = `translate(-50%,-50%) translate(${t.tx}px,${t.ty}px) rotate(${rot}deg) scale(${t.sc})` }
+  const fit = () => {
+    const im = imgRef.current, w = wrapRef.current; if (!im || !im.naturalWidth || !w) return
+    const land = rot % 180 !== 0
+    const iw = land ? im.naturalHeight : im.naturalWidth, ih = land ? im.naturalWidth : im.naturalHeight
+    const s = (w.clientWidth / iw) || 1
+    tf.current = { tx: 0, ty: Math.max(0, (ih * s - w.clientHeight) / 2), sc: s, fit: s }  // ancho completo, empieza arriba
+    apply()
+  }
+  const zoom = f => { const t = tf.current; t.sc = Math.min(t.fit * 8, Math.max(t.fit, t.sc * f)); apply() }
+  useEffect(() => { const im = imgRef.current; if (!im) return; im.onload = fit; im.src = src; if (im.complete && im.naturalWidth) fit() }, [src, rot])
+  useEffect(() => {
+    const w = wrapRef.current; if (!w) return
+    const pts = new Map(); let mode = null, sx = 0, sy = 0, bx = 0, by = 0, sd = 0, ssc = 1, smx = 0, smy = 0, btx = 0, bty = 0, lastTap = 0
+    const arr = () => [...pts.values()]
+    const dist = () => { const p = arr(); return Math.hypot(p[0].x - p[1].x, p[0].y - p[1].y) }
+    const mid = () => { const p = arr(); return [(p[0].x + p[1].x) / 2, (p[0].y + p[1].y) / 2] }
+    const down = e => {
+      if (e.target.closest('.pvctrl')) return
+      pts.set(e.pointerId, { x: e.clientX, y: e.clientY }); try { w.setPointerCapture(e.pointerId) } catch (_) {}; e.preventDefault()
+      if (pts.size === 2) { mode = 'pinch'; sd = dist(); ssc = tf.current.sc;[smx, smy] = mid(); btx = tf.current.tx; bty = tf.current.ty }
+      else if (pts.size === 1) {
+        const now = Date.now()
+        if (now - lastTap < 300) { if (tf.current.sc > tf.current.fit * 1.2) fit(); else { tf.current.sc = tf.current.fit * 2.5; tf.current.tx = 0; tf.current.ty = 0; apply() } mode = null; lastTap = 0; return }
+        lastTap = now; sx = e.clientX; sy = e.clientY; bx = tf.current.tx; by = tf.current.ty; mode = 'pan'
+      }
+    }
+    const move = e => {
+      if (!pts.has(e.pointerId)) return; pts.set(e.pointerId, { x: e.clientX, y: e.clientY })
+      if (mode === 'pinch' && pts.size >= 2) { const d = dist(), [mx, my] = mid(); tf.current.sc = Math.min(tf.current.fit * 8, Math.max(tf.current.fit, ssc * (d / (sd || 1)))); tf.current.tx = btx + (mx - smx); tf.current.ty = bty + (my - smy); apply(); return }
+      if (mode === 'pan') { tf.current.tx = bx + (e.clientX - sx); tf.current.ty = by + (e.clientY - sy); apply() }
+    }
+    const up = e => { pts.delete(e.pointerId); if (pts.size === 0) mode = null; else if (pts.size === 1 && mode === 'pinch') { const p = arr()[0]; sx = p.x; sy = p.y; bx = tf.current.tx; by = tf.current.ty; mode = 'pan' } }
+    const wheel = e => { e.preventDefault(); zoom(e.deltaY < 0 ? 1.12 : 0.89) }
+    w.addEventListener('pointerdown', down); w.addEventListener('pointermove', move); w.addEventListener('pointerup', up); w.addEventListener('pointercancel', up); w.addEventListener('wheel', wheel, { passive: false })
+    return () => { w.removeEventListener('pointerdown', down); w.removeEventListener('pointermove', move); w.removeEventListener('pointerup', up); w.removeEventListener('pointercancel', up); w.removeEventListener('wheel', wheel) }
+  }, [rot])
+  return (
+    <div ref={wrapRef} className="relative overflow-hidden bg-slate-900 rounded-xl mx-3 mb-2 shrink-0 select-none" style={{ height: '30vh', touchAction: 'none' }}>
+      <img ref={imgRef} draggable="false" alt="" className="absolute left-1/2 top-1/2 max-w-none select-none will-change-transform" style={{ touchAction: 'none' }} />
+      <div className="pvctrl absolute right-2 bottom-2 flex gap-1.5" onPointerDown={e => e.stopPropagation()}>
+        <button onClick={() => zoom(1.4)} className="grid place-items-center w-8 h-8 rounded-lg bg-white/90 text-slate-700 shadow"><Icon d={I.zoomIn} className="w-4 h-4" /></button>
+        <button onClick={() => zoom(0.7)} className="grid place-items-center w-8 h-8 rounded-lg bg-white/90 text-slate-700 shadow"><Icon d={I.zoomOut} className="w-4 h-4" /></button>
+        <button onClick={fit} className="grid place-items-center w-8 h-8 rounded-lg bg-white/90 text-slate-700 shadow"><Icon d={I.fit} className="w-4 h-4" /></button>
+      </div>
+    </div>
+  )
+}
 
 /* resumen siempre visible de los datos guardados (móvil) — pulsar = editar */
 function ReviewSummary({ it, marks, onEdit }) {
