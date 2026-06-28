@@ -30,70 +30,7 @@ export function userLabel(session) {
   return e.endsWith('@factuosa.com') ? e.replace('@factuosa.com', '') : e
 }
 
-// Lee el estado de UNA tanda. Devuelve { marks, updatedAt } o null.
-export async function loadRemote(tanda) {
-  if (!sb) return null
-  const { data, error } = await sb.from('review_state').select('marks, updated_at').eq('tanda', tanda).maybeSingle()
-  if (error || !data) return null
-  return { marks: data.marks || {}, updatedAt: data.updated_at }
-}
-
-// Lee el estado de TODAS las tandas (para el panel). Devuelve { [tanda]: marks }.
-export async function loadAllRemote() {
-  if (!sb) return {}
-  const { data, error } = await sb.from('review_state').select('tanda, marks')
-  if (error || !data) return {}
-  const out = {}
-  for (const r of data) out[r.tanda] = r.marks || {}
-  return out
-}
-
-// Guarda (upsert) el estado de una tanda.
-export async function saveRemote(tanda, marks) {
-  if (!sb) return false
-  const { error } = await sb.from('review_state').upsert(
-    { tanda, marks, updated_at: new Date().toISOString() },
-    { onConflict: 'tanda' }
-  )
-  return !error
-}
-
-// Borra el estado remoto de una tanda (al eliminar la tanda).
-export async function deleteRemote(tanda) {
-  if (!sb) return false
-  const { error } = await sb.from('review_state').delete().eq('tanda', tanda)
-  return !error
-}
-
-/* ---------- datos (facturas/tandas) en Supabase ---------- */
-
-// Lista de tandas desde la vista `tandas`. Devuelve null si no hay sync.
-export async function listTandas() {
-  if (!sb) return null
-  const { data, error } = await sb.from('tandas').select('tanda, n, creado').order('tanda', { ascending: false })
-  if (error || !data) return null
-  return data.map(r => ({ fecha: r.tanda, archivo: r.tanda, n: r.n, creado: r.creado }))
-}
-
-// Facturas de una tanda, con la imagen como URL firmada del Storage.
-// Devuelve el mismo shape que los items del JSON (id, img, rot0, ...).
-export async function loadFacturas(tanda) {
-  if (!sb) return null
-  const { data, error } = await sb.from('facturas').select('*').eq('tanda', tanda).order('item_id', { ascending: true })
-  if (error || !data) return null
-  const paths = data.map(r => r.img_path).filter(Boolean)
-  const urls = {}
-  if (paths.length) {
-    const { data: signed } = await sb.storage.from('facturas').createSignedUrls(paths, 86400)
-    if (signed) for (const s of signed) if (s && s.signedUrl) urls[s.path] = s.signedUrl
-  }
-  return data.map(r => ({
-    id: r.item_id, img: urls[r.img_path] || '', rot0: r.rot0 ?? 0,
-    fecha: r.fecha, proveedor: r.proveedor, num: r.num,
-    base: r.base, iva: r.iva, total: r.total, timp: r.timp,
-    conf: r.conf, flag: r.flag, obs: r.obs,
-  }))
-}
+/* ---------- datos en Supabase ---------- */
 
 // Todas las facturas (sin imágenes) para estadísticas.
 export async function loadAllFacturas() {
@@ -144,16 +81,6 @@ export async function deleteJob(job) {
     if (ups?.length) await sb.storage.from('uploads').remove(ups.map(u => `${job.empresa}/${job.id}/${u.name}`))
   } catch (e) {}
   const { error } = await sb.from('jobs').delete().eq('id', job.id)  // cascade: facturas + revisiones
-  return !error
-}
-
-// Borra una tanda completa (filas + imágenes del Storage).
-export async function deleteTandaData(tanda) {
-  if (!sb) return false
-  const { data: files } = await sb.from('facturas').select('img_path').eq('tanda', tanda)
-  const paths = (files || []).map(f => f.img_path).filter(Boolean)
-  if (paths.length) await sb.storage.from('facturas').remove(paths)
-  const { error } = await sb.from('facturas').delete().eq('tanda', tanda)
   return !error
 }
 

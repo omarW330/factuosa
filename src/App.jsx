@@ -4,9 +4,7 @@ import { syncEnabled, getSession, onAuth, signIn, signOut, userLabel,
   listJobs, loadFacturasByJob, loadJobStats, deleteJob, loadRevisiones, saveRevision,
   loadAllFacturas, loadAllRevisiones, listEmpresas, createJob, uploadFiles, loadStatus, subscribeJobs } from './supabase.js'
 
-const BASE = import.meta.env.BASE_URL
-
-/* ---------- helpers de datos (no rompen el contrato JSON) ---------- */
+/* ---------- helpers de datos ---------- */
 const rotOf = (it, m) => (((m[it.id]?.rot ?? it.rot0) % 360) + 360) % 360
 const F = (it, m, k) => { const s = m[it.id]; return s && s[k] != null ? s[k] : it[k] }
 const Nv = (it, m, k) => { const v = F(it, m, k); return typeof v === 'number' ? v : (parseFloat(String(v).replace(',', '.')) || 0) }
@@ -368,11 +366,13 @@ const Kpi = ({ n, label, tone }) => {
 
 function JobCard({ job, s, onOpen, onDelete }) {
   const est = ESTADO[job.estado] || ESTADO.en_cola
-  const n = s?.n ?? job.n_facturas ?? 0
+  const subidas = job.n_facturas ?? 0
+  const n = s?.n ?? subidas                      // extraídas
   const ver = s?.ver ?? 0, rev = s?.rev ?? 0
   const pend = Math.max(0, n - ver - rev)
   const pct = n ? Math.round((ver / n) * 100) : 0
   const done = n > 0 && ver === n
+  const faltan = job.estado === 'listo' && subidas > n ? subidas - n : 0
   return (
     <div className="group rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm hover:shadow-md hover:border-indigo-300 transition overflow-hidden">
       <button onClick={onOpen} className="w-full text-left p-4">
@@ -383,7 +383,7 @@ function JobCard({ job, s, onOpen, onDelete }) {
               <span className={'px-1.5 py-0.5 rounded text-[10px] font-bold ' + est.c}>{est.l.toUpperCase()}</span>
               {done && <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-emerald-100 text-emerald-700">COMPLETA</span>}
             </div>
-            <div className="text-[12px] text-slate-400 mt-0.5">{n} facturas · {relDay(job.creado)} · {relTime(job.terminado || job.creado)}</div>
+            <div className="text-[12px] text-slate-400 mt-0.5">{n} facturas{faltan ? <span className="text-amber-600 font-semibold"> · ⚠ faltan {faltan}</span> : ''} · {relDay(job.creado)} · {relTime(job.terminado || job.creado)}</div>
           </div>
           <Icon d={I.chevR} className="w-5 h-5 text-slate-300 group-hover:text-indigo-500 transition shrink-0" />
         </div>
@@ -614,6 +614,12 @@ function ListView({ sel, items, marks, setField, mark, reset, rotate, sync, user
   /* precarga TODAS las fotos del lote en caché al entrar (sin esperas en revisión) */
   useEffect(() => { const pre = items.map(it => { const im = new Image(); im.src = it.img; return im }); return () => pre.forEach(im => { im.src = '' }) }, [items])
 
+  const totalLote = items.reduce((a, it) => a + Nv(it, marks, 'total'), 0)
+  const subidas = sel?.n_facturas ?? items.length
+  const faltan = Math.max(0, subidas - items.length)
+  const autoOk = items.filter(it => cuadraOf(it, marks) && it.conf === 'alta' && marks[it.id]?.status !== 'ver')
+  const quickVerify = () => { if (autoOk.length && window.confirm(`Verificar ${autoOk.length} factura(s) que cuadran y son de confianza alta?`)) autoOk.forEach(it => mark(it.id, 'ver')) }
+
   const ordered = [...items].sort((a, b) => rank(a, marks) - rank(b, marks))
   const ql = q.trim().toLowerCase()
   const visible = ordered.filter(it => {
@@ -638,7 +644,11 @@ function ListView({ sel, items, marks, setField, mark, reset, rotate, sync, user
             <button onClick={onBack} className="grid place-items-center w-9 h-9 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-600 dark:text-slate-300 transition"><Icon d={I.back} /></button>
             <div className="min-w-0">
               <h1 className="font-bold text-slate-900 dark:text-slate-100 leading-tight truncate">{sel?.empresa || 'Lote'} · {relDay(sel?.creado)}</h1>
-              <div className="flex items-center gap-2"><p className="text-[12px] text-slate-500 dark:text-slate-400">{ver} verif · {rev} a revisar · {items.length - ver - rev} pend</p><SyncBadge sync={sync} /></div>
+              <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
+                <p className="text-[12px] text-slate-500 dark:text-slate-400">{ver} verif · {rev} a revisar · {items.length - ver - rev} pend · Total <b className="text-slate-700 dark:text-slate-200">{eur(totalLote)}</b></p>
+                <SyncBadge sync={sync} />
+                {faltan > 0 && <span className="text-[12px] font-semibold text-amber-600" title="La IA extrajo menos facturas de las que subiste">⚠ subidas {subidas} · extraídas {items.length}</span>}
+              </div>
             </div>
             <div className="ml-auto flex items-center gap-2">
               <button onClick={() => setReview(true)} className="hidden sm:flex items-center gap-1.5 px-3.5 py-2 rounded-xl brand-grad text-white text-sm font-semibold shadow-lg shadow-indigo-600/30 hover:opacity-90 transition"><Icon d={I.play} className="w-4 h-4" /> Revisar</button>
@@ -652,6 +662,7 @@ function ListView({ sel, items, marks, setField, mark, reset, rotate, sync, user
             <FilterBtn id="pend" label="Pendientes" n={items.length - ver} />
             <FilterBtn id="ver" label="Verificadas" n={ver} />
             <FilterBtn id="flag" label="A revisar" n={rev} />
+            {autoOk.length > 0 && <button onClick={quickVerify} title="Verifica las que cuadran y son de confianza alta" className="flex items-center gap-1 px-3 py-1.5 rounded-full text-[13px] font-semibold whitespace-nowrap bg-emerald-600 text-white hover:bg-emerald-700 transition"><Icon d={I.check} className="w-3.5 h-3.5" /> {autoOk.length} OK</button>}
             <div className="relative ml-auto flex-1 min-w-[140px] max-w-[260px]">
               <Icon d={I.search} className="w-4 h-4 absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
               <input value={q} onChange={e => setQ(e.target.value)} placeholder="Buscar…" className="w-full pl-8 pr-2 py-1.5 rounded-full border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 text-[13px] focus:border-indigo-500 focus:ring-2 focus:ring-indigo-200 outline-none" />

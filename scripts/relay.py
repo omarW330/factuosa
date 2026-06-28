@@ -17,7 +17,29 @@ Variables de entorno:
   SUPABASE_URL (o VITE_SUPABASE_URL), SUPABASE_SERVICE_ROLE_KEY
   DROPBOX_ENTRADA (def. '/facturas AGM/entrada'), DROPBOX_WEB (def. '/facturas AGM/web')
 """
-import os, json, base64, re, urllib.request, urllib.parse, urllib.error
+import os, json, base64, re, io, urllib.request, urllib.parse, urllib.error
+try:
+    from PIL import Image, ImageOps
+    PIL_OK = True
+except Exception:
+    PIL_OK = False
+
+
+def shrink(content, maxpx=1600, q=82):
+    """Reduce la imagen a JPEG (máx maxpx, corrige orientación EXIF). None si no se puede."""
+    if not PIL_OK:
+        return None
+    try:
+        im = Image.open(io.BytesIO(content))
+        im = ImageOps.exif_transpose(im)
+        if im.mode not in ("RGB", "L"):
+            im = im.convert("RGB")
+        im.thumbnail((maxpx, maxpx))
+        out = io.BytesIO()
+        im.save(out, format="JPEG", quality=q, optimize=True)
+        return out.getvalue()
+    except Exception:
+        return None
 
 APP_KEY = os.environ["DROPBOX_APP_KEY"]
 APP_SECRET = os.environ["DROPBOX_APP_SECRET"]
@@ -185,28 +207,31 @@ def process_web_file(tok, e, move_after):
         rows, okimg = [], 0
         for i, it in enumerate(items):
             iid = it.get("id") or f"r{i + 1}"
-            img_path = None
+            img_path, content, ext, ct = None, None, "jpg", "image/jpeg"
             # 1) foto REAL desde Dropbox /entrada (por nombre de fichero original)
             src = _src_filename(it)
             if src:
                 safe = re.sub(r"[^\w.\-]+", "_", src)
-                ext = safe.rsplit(".", 1)[-1].lower() if "." in safe else "jpg"
+                ext = safe.rsplit(".", 1)[-1].lower() if "." in safe else "jpg"; ct = CT.get(ext, "image/jpeg")
                 try:
                     content = dbx_download(tok, f"{ENTRADA}/{emp}/{jid}/{safe}")
-                    img_path = f"{jid}/{iid}.{ext}"
-                    sb_storage_upload("facturas", img_path, content, CT.get(ext, "image/jpeg")); okimg += 1
                 except Exception:
-                    print(f"    · img {iid}: no encontrada en /entrada ({src})"); img_path = None
+                    print(f"    · img {iid}: no encontrada en /entrada ({src})")
             # 2) fallback: base64 embebido (ignora placeholders diminutos tipo 1x1)
-            if not img_path:
+            if content is None:
                 mm = re.match(r"^data:(image/[a-z+]+);base64,(.+)$", str(it.get("img") or ""), re.I)
                 if mm and len(mm.group(2)) > 200:
-                    ext = EXT.get(mm.group(1).lower(), "jpg")
-                    img_path = f"{jid}/{iid}.{ext}"
-                    try:
-                        sb_storage_upload("facturas", img_path, base64.b64decode(mm.group(2)), mm.group(1)); okimg += 1
-                    except Exception as ex:
-                        print(f"    ✗ img {iid}: {ex}"); img_path = None
+                    content = base64.b64decode(mm.group(2)); ext = EXT.get(mm.group(1).lower(), "jpg"); ct = mm.group(1)
+            # redimensiona (ahorra ~15×); si no se puede (p.ej. PDF), sube original
+            if content is not None:
+                small = shrink(content)
+                if small is not None:
+                    content, ext, ct = small, "jpg", "image/jpeg"
+                img_path = f"{jid}/{iid}.{ext}"
+                try:
+                    sb_storage_upload("facturas", img_path, content, ct); okimg += 1
+                except Exception as ex:
+                    print(f"    ✗ img {iid}: {ex}"); img_path = None
             rows.append({
                 "job_id": jid, "tanda": jid, "empresa": emp, "item_id": iid, "img_path": img_path,
                 "rot0": int(tonum(it.get("rot0")) or 0), "fecha": it.get("fecha"), "proveedor": it.get("proveedor"),
@@ -215,7 +240,7 @@ def process_web_file(tok, e, move_after):
             })
         if rows:
             sb_rest("POST", "facturas", rows)
-        sb_rest("PATCH", f"jobs?id=eq.{jid}", {"estado": "listo", "n_facturas": len(rows), "terminado": "now()"})
+        sb_rest("PATCH", f"jobs?id=eq.{jid}", {"estado": "listo", "terminado": "now()"})  # n_facturas se deja = subidas
         if move_after:
             dbx_move(tok, e["path_lower"], f"{WEB}/procesados/{name}")
         print(f"  ✓ {jid}: {len(rows)} facturas ({okimg} imágenes) → Supabase, job=listo")
