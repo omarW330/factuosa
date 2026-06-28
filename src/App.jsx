@@ -87,8 +87,13 @@ function Login({ theme, onToggleTheme }) {
   }
   const inp = 'w-full rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 dark:text-slate-100 px-3 py-2.5 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-200 dark:focus:ring-indigo-500/30 outline-none'
   return (
-    <div className="min-h-full grid place-items-center px-4">
-      <form onSubmit={submit} className="w-full max-w-sm rounded-3xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-xl p-7 card-in">
+    <div className="relative min-h-full grid place-items-center px-4 overflow-hidden">
+      <div className="pointer-events-none absolute inset-0">
+        <div className="absolute -top-24 -left-20 w-80 h-80 rounded-full bg-indigo-400/30 dark:bg-indigo-500/20 blur-3xl" />
+        <div className="absolute top-1/4 -right-24 w-80 h-80 rounded-full bg-fuchsia-400/25 dark:bg-fuchsia-500/15 blur-3xl" />
+        <div className="absolute -bottom-24 left-1/4 w-80 h-80 rounded-full bg-emerald-300/25 dark:bg-emerald-500/10 blur-3xl" />
+      </div>
+      <form onSubmit={submit} className="relative z-10 w-full max-w-sm rounded-3xl bg-white/90 dark:bg-slate-900/90 backdrop-blur-xl border border-slate-200 dark:border-slate-800 shadow-2xl p-7 card-in">
         <div className="flex items-start justify-between mb-4">
           <div className="grid place-items-center w-12 h-12 rounded-2xl brand-grad text-white shadow-lg shadow-indigo-600/30"><Icon d={I.lock} /></div>
           <ThemeToggle theme={theme} onToggle={onToggleTheme} />
@@ -134,6 +139,24 @@ const Icon = ({ d, className = 'w-5 h-5', sw = 2 }) => (
   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={sw} strokeLinecap="round" strokeLinejoin="round" className={className}>{d}</svg>
 )
 
+/* esqueleto de carga */
+const Skel = ({ className = '' }) => <div className={'animate-pulse rounded-2xl bg-slate-200/70 dark:bg-slate-800/80 ' + className} />
+
+/* anillo de progreso */
+function Ring({ pct, size = 76, stroke = 8 }) {
+  const r = (size - stroke) / 2, c = 2 * Math.PI * r
+  return (
+    <div className="relative shrink-0" style={{ width: size, height: size }}>
+      <svg width={size} height={size} className="-rotate-90">
+        <circle cx={size / 2} cy={size / 2} r={r} fill="none" strokeWidth={stroke} className="stroke-slate-200 dark:stroke-slate-700" />
+        <circle cx={size / 2} cy={size / 2} r={r} fill="none" strokeWidth={stroke} strokeLinecap="round" stroke="url(#ringg)" strokeDasharray={c} strokeDashoffset={c * (1 - pct / 100)} style={{ transition: 'stroke-dashoffset .5s ease' }} />
+        <defs><linearGradient id="ringg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stopColor="#34d399" /><stop offset="1" stopColor="#059669" /></linearGradient></defs>
+      </svg>
+      <div className="absolute inset-0 grid place-items-center"><span className="text-base font-extrabold text-slate-900 dark:text-slate-100 tabular-nums">{pct}%</span></div>
+    </div>
+  )
+}
+
 /* ================================================================= */
 export default function App() {
   const [jobs, setJobs] = useState([])
@@ -150,6 +173,8 @@ export default function App() {
   const [session, setSession] = useState(null)
   const [authReady, setAuthReady] = useState(!syncEnabled)
   const [theme, setTheme] = useState(getTheme)
+  const [loaded, setLoaded] = useState(false)         // datos del panel cargados
+  const [itemsLoading, setItemsLoading] = useState(false)
   const cacheKeyRef = useRef('')
   const saveTimers = useRef({})
 
@@ -168,7 +193,7 @@ export default function App() {
   const refresh = useCallback(async () => {
     if (!syncEnabled) return
     const [j, s, hb, emp] = await Promise.all([listJobs(), loadJobStats(), loadStatus(), listEmpresas()])
-    if (j) setJobs(j); setStats(s || {}); setHeartbeat(hb); setEmpresas(emp || [])
+    if (j) setJobs(j); setStats(s || {}); setHeartbeat(hb); setEmpresas(emp || []); setLoaded(true)
   }, [])
   useEffect(() => { if (session) refresh() }, [session, refresh])
   /* Realtime: recarga cuando cambian los jobs o el latido */
@@ -176,12 +201,12 @@ export default function App() {
 
   /* carga de un job (facturas + revisiones desde Supabase) */
   const openJob = useCallback(async job => {
-    setSel(job); setView('list'); setItems([])
+    setSel(job); setView('list'); setItems([]); setItemsLoading(true)
     cacheKeyRef.current = 'agm_revj_' + job.id
     setMarks(lsGet(cacheKeyRef.current, {}))   // cache local primero (instantáneo)
     window.scrollTo(0, 0)
     const its = (await loadFacturasByJob(job.id)) || []
-    setItems(its)
+    setItems(its); setItemsLoading(false)
     const rev = await loadRevisiones(its.map(x => x.id))
     const m = {}
     for (const id in rev) { const { updated_at, ...rest } = rev[id]; m[id] = rest }
@@ -231,13 +256,13 @@ export default function App() {
   return (
     <div className="min-h-full">
       {view === 'dashboard' &&
-        <Dashboard jobs={jobs} stats={stats} heartbeat={heartbeat} sync={sync} session={session} userName={userName}
+        <Dashboard jobs={jobs} stats={stats} heartbeat={heartbeat} sync={sync} session={session} userName={userName} loaded={loaded}
           theme={theme} onToggleTheme={toggleTheme}
           onOpen={openJob} onDelete={setConfirm} onStats={() => setView('stats')} onUpload={() => setUpload(true)} />}
       {view === 'stats' &&
         <StatsView onBack={() => setView('dashboard')} />}
       {view === 'list' &&
-        <ListView sel={sel} items={items} marks={marks} setField={setField} mark={mark} reset={reset} rotate={rotate} sync={sync} userName={userName}
+        <ListView sel={sel} items={items} marks={marks} setField={setField} mark={mark} reset={reset} rotate={rotate} sync={sync} userName={userName} itemsLoading={itemsLoading}
           exportXlsx={exportXlsx} copyTable={copyTable} update={update}
           onBack={() => { setView('dashboard'); refresh() }} onDelete={() => setConfirm(sel)} />}
 
@@ -288,7 +313,7 @@ function StatusBar({ heartbeat }) {
   )
 }
 
-function Dashboard({ jobs, stats, heartbeat, sync, session, userName, theme, onToggleTheme, onOpen, onDelete, onStats, onUpload }) {
+function Dashboard({ jobs, stats, heartbeat, sync, session, userName, loaded, theme, onToggleTheme, onOpen, onDelete, onStats, onUpload }) {
   const g = Object.values(stats).reduce((a, s) => ({ n: a.n + s.n, ver: a.ver + s.ver, rev: a.rev + s.rev }), { n: 0, ver: 0, rev: 0 })
   g.pend = Math.max(0, g.n - g.ver - g.rev)
   const pct = g.n ? Math.round((g.ver / g.n) * 100) : 0
@@ -321,44 +346,61 @@ function Dashboard({ jobs, stats, heartbeat, sync, session, userName, theme, onT
 
       <div className="mb-3"><StatusBar heartbeat={heartbeat} /></div>
 
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-        <Kpi n={g.n} label="Facturas" tone="slate" />
-        <Kpi n={g.ver} label="Verificadas" tone="emerald" />
-        <Kpi n={g.rev} label="A revisar" tone="amber" />
-        <Kpi n={g.pend} label="Pendientes" tone="indigo" />
-      </div>
-
-      {g.n > 0 && (
-        <div className="mt-4 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-4 shadow-sm">
-          <div className="flex items-center justify-between text-sm mb-2">
-            <span className="font-semibold text-slate-700 dark:text-slate-200">Progreso global</span>
-            <span className="text-slate-500 dark:text-slate-400">{g.ver}/{g.n} · <b className="text-emerald-600">{pct}%</b></span>
+      {!loaded ? (
+        <>
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">{[0, 1, 2, 3].map(i => <Skel key={i} className="h-[104px]" />)}</div>
+          <h2 className="mt-8 mb-3 text-sm font-semibold uppercase tracking-wide text-slate-400">Lotes</h2>
+          <div className="grid sm:grid-cols-2 gap-3">{[0, 1].map(i => <Skel key={i} className="h-[150px]" />)}</div>
+        </>
+      ) : (
+        <>
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+            <Kpi n={g.n} label="Facturas" tone="slate" icon={I.doc} />
+            <Kpi n={g.ver} label="Verificadas" tone="emerald" icon={I.check} />
+            <Kpi n={g.rev} label="A revisar" tone="amber" icon={I.flag} />
+            <Kpi n={g.pend} label="Pendientes" tone="indigo" icon={I.clock} />
           </div>
-          <div className="h-2.5 rounded-full bg-slate-100 dark:bg-slate-800 overflow-hidden"><div className="h-full bg-gradient-to-r from-emerald-400 to-emerald-600 transition-all" style={{ width: pct + '%' }} /></div>
-        </div>
-      )}
 
-      <div className="mt-8 mb-3 flex items-center justify-between gap-2">
-        <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-400">Lotes</h2>
-        <div className="flex items-center gap-2">
-          <button onClick={onStats} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-sm font-semibold text-slate-700 dark:text-slate-200 hover:border-indigo-300 hover:text-indigo-600 transition"><Icon d={I.chart} className="w-4 h-4" /> <span className="hidden sm:inline">Estadísticas</span></button>
-          <button onClick={onUpload} className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg brand-grad text-white text-sm font-semibold shadow shadow-indigo-600/30 hover:opacity-90 transition"><Icon d={I.upload} className="w-4 h-4" /> Subir facturas</button>
-        </div>
-      </div>
-      {jobs.length === 0
-        ? <div className="rounded-2xl border border-dashed border-slate-300 dark:border-slate-700 bg-white/60 dark:bg-slate-900/50 p-10 text-center text-slate-500 dark:text-slate-400">No hay lotes todavía. Pulsa <b>Subir facturas</b> para crear el primero.</div>
-        : <div className="grid sm:grid-cols-2 gap-3">
-            {jobs.map(j => <JobCard key={j.id} job={j} s={stats[j.id]} onOpen={() => onOpen(j)} onDelete={() => onDelete(j)} />)}
-          </div>}
+          {g.n > 0 && (
+            <div className="mt-4 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-4 shadow-sm flex items-center gap-4">
+              <Ring pct={pct} />
+              <div className="flex-1 min-w-0">
+                <div className="font-semibold text-slate-700 dark:text-slate-200">Progreso global</div>
+                <div className="text-[13px] text-slate-500 dark:text-slate-400">{g.ver} de {g.n} verificadas · {g.pend} pendientes</div>
+                <div className="mt-2 h-2 rounded-full bg-slate-100 dark:bg-slate-800 overflow-hidden"><div className="h-full bg-gradient-to-r from-emerald-400 to-emerald-600 transition-all" style={{ width: pct + '%' }} /></div>
+              </div>
+            </div>
+          )}
+
+          <div className="mt-8 mb-3 flex items-center justify-between gap-2">
+            <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-400">Lotes</h2>
+            <div className="flex items-center gap-2">
+              <button onClick={onStats} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-sm font-semibold text-slate-700 dark:text-slate-200 hover:border-indigo-300 hover:text-indigo-600 transition"><Icon d={I.chart} className="w-4 h-4" /> <span className="hidden sm:inline">Estadísticas</span></button>
+              <button onClick={onUpload} className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg brand-grad text-white text-sm font-semibold shadow shadow-indigo-600/30 hover:opacity-90 transition"><Icon d={I.upload} className="w-4 h-4" /> Subir facturas</button>
+            </div>
+          </div>
+          {jobs.length === 0
+            ? <div className="rounded-2xl border border-dashed border-slate-300 dark:border-slate-700 bg-white/60 dark:bg-slate-900/50 p-10 text-center text-slate-500 dark:text-slate-400">No hay lotes todavía. Pulsa <b>Subir facturas</b> para crear el primero.</div>
+            : <div className="grid sm:grid-cols-2 gap-3">
+                {jobs.map(j => <JobCard key={j.id} job={j} s={stats[j.id]} onOpen={() => onOpen(j)} onDelete={() => onDelete(j)} />)}
+              </div>}
+        </>
+      )}
     </div>
   )
 }
 
-const Kpi = ({ n, label, tone }) => {
-  const tones = { slate: 'text-slate-900 dark:text-slate-100', emerald: 'text-emerald-600', amber: 'text-amber-600', indigo: 'text-indigo-600' }
+const Kpi = ({ n, label, tone, icon }) => {
+  const t = {
+    slate: ['text-slate-900 dark:text-slate-100', 'bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-300'],
+    emerald: ['text-emerald-600 dark:text-emerald-400', 'bg-emerald-100 dark:bg-emerald-500/15 text-emerald-600 dark:text-emerald-400'],
+    amber: ['text-amber-600 dark:text-amber-400', 'bg-amber-100 dark:bg-amber-500/15 text-amber-600 dark:text-amber-400'],
+    indigo: ['text-indigo-600 dark:text-indigo-400', 'bg-indigo-100 dark:bg-indigo-500/15 text-indigo-600 dark:text-indigo-400'],
+  }[tone] || ['text-slate-900 dark:text-slate-100', 'bg-slate-100 dark:bg-slate-800']
   return (
     <div className="rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-4 shadow-sm">
-      <div className={'text-3xl font-extrabold tabular-nums dark:brightness-110' + tones[tone]}>{n}</div>
+      {icon && <div className={'grid place-items-center w-9 h-9 rounded-xl mb-2 ' + t[1]}><Icon d={icon} className="w-[18px] h-[18px]" /></div>}
+      <div className={'text-3xl font-extrabold tabular-nums ' + t[0]}>{n}</div>
       <div className="text-[13px] text-slate-500 dark:text-slate-400 mt-0.5">{label}</div>
     </div>
   )
@@ -507,20 +549,20 @@ function StatsView({ onBack }) {
         <button onClick={onBack} className="grid place-items-center w-9 h-9 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-600 dark:text-slate-300 transition"><Icon d={I.back} /></button>
         <div>
           <h1 className="text-xl font-bold tracking-tight text-slate-900 dark:text-slate-100">Estadísticas</h1>
-          <p className="text-[13px] text-slate-500 dark:text-slate-400">Sobre todas las tandas</p>
+          <p className="text-[13px] text-slate-500 dark:text-slate-400">Sobre todos los lotes</p>
         </div>
       </header>
 
       {rows === null
-        ? <p className="text-slate-400 py-10 text-center">Cargando…</p>
+        ? <div className="space-y-3"><div className="grid grid-cols-2 sm:grid-cols-4 gap-3">{[0, 1, 2, 3].map(i => <Skel key={i} className="h-[104px]" />)}</div><Skel className="h-40" /><Skel className="h-40" /></div>
         : rows.length === 0
         ? <p className="text-slate-400 py-10 text-center">Sin datos todavía.</p>
         : <>
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-            <Kpi n={st.n} label="Facturas" tone="slate" />
-            <Kpi n={st.ver} label="Verificadas" tone="emerald" />
-            <Kpi n={st.rev} label="A revisar" tone="amber" />
-            <Kpi n={st.pend} label="Pendientes" tone="indigo" />
+            <Kpi n={st.n} label="Facturas" tone="slate" icon={I.doc} />
+            <Kpi n={st.ver} label="Verificadas" tone="emerald" icon={I.check} />
+            <Kpi n={st.rev} label="A revisar" tone="amber" icon={I.flag} />
+            <Kpi n={st.pend} label="Pendientes" tone="indigo" icon={I.clock} />
           </div>
 
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mt-3">
@@ -601,7 +643,7 @@ function Fields({ it, marks, setField, compact }) {
 }
 
 /* ===================== LISTA (una tanda) ===================== */
-function ListView({ sel, items, marks, setField, mark, reset, rotate, sync, userName, exportXlsx, copyTable, onBack, onDelete }) {
+function ListView({ sel, items, marks, setField, mark, reset, rotate, sync, userName, itemsLoading, exportXlsx, copyTable, onBack, onDelete }) {
   const [filter, setFilter] = useState('todas')
   const [q, setQ] = useState('')
   const [modalId, setModalId] = useState(null)
@@ -673,7 +715,8 @@ function ListView({ sel, items, marks, setField, mark, reset, rotate, sync, user
 
       {/* tarjetas */}
       <div className="mx-auto max-w-5xl px-4 py-5 space-y-4">
-        {items.length === 0 && <p className="text-slate-400 py-10 text-center">Cargando facturas…</p>}
+        {itemsLoading && items.length === 0 && [0, 1, 2].map(i => <Skel key={i} className="h-56 sm:h-64" />)}
+        {!itemsLoading && items.length === 0 && <p className="text-slate-400 py-10 text-center">{sel?.estado === 'listo' ? 'Este lote no tiene facturas.' : 'El lote aún se está procesando…'}</p>}
         {items.length > 0 && visible.length === 0 && <p className="text-slate-400 py-10 text-center">Sin resultados para este filtro.</p>}
         {visible.map(it => <InvoiceCard key={it.id} it={it} marks={marks} setField={setField} mark={mark} reset={reset} rotate={rotate} onZoom={() => setModalId(it.id)} />)}
       </div>
