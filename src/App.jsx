@@ -935,9 +935,13 @@ function ReviewMode({ items, marks, setField, setReview, mark, rotate, exportXls
       {sheet && (
         <div className="md:hidden fixed inset-0 z-40" onClick={() => setSheet(false)}>
           <div className="absolute inset-0 bg-black/40" />
-          <div className="absolute inset-x-0 bottom-0 max-h-[80vh] rounded-t-3xl bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100 flex flex-col card-in safe-b" onClick={e => e.stopPropagation()}>
-            <div className="pt-3 pb-1 grid place-items-center"><div className="w-10 h-1.5 rounded-full bg-slate-300" /></div>
-            <div className="flex items-center justify-between px-5 pb-2">
+          <div className="absolute inset-x-0 bottom-0 h-[88vh] rounded-t-3xl bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100 flex flex-col card-in safe-b" onClick={e => e.stopPropagation()}>
+            <div className="pt-2.5 pb-1 grid place-items-center shrink-0"><div className="w-10 h-1.5 rounded-full bg-slate-300 dark:bg-slate-600" /></div>
+            {/* foto del ticket: visible y desplazable mientras editas */}
+            <div className="shrink-0 mx-3 mb-2 rounded-xl overflow-auto bg-slate-900 thin-sb" style={{ height: '30vh' }}>
+              <img src={it.img} alt="" draggable="false" className={(rotOf(it, marks) % 180 ? 'h-full mx-auto' : 'w-full') + ' block select-none'} style={{ transform: `rotate(${rotOf(it, marks)}deg)`, transformOrigin: 'center' }} />
+            </div>
+            <div className="flex items-center justify-between px-5 pb-2 shrink-0">
               <div className="text-base font-bold truncate">{F(it, marks, 'proveedor') || '—'}</div>
               <button onClick={() => setSheet(false)} className="grid place-items-center w-8 h-8 rounded-lg bg-slate-100 dark:bg-slate-800"><Icon d={I.x} className="w-4 h-4" /></button>
             </div>
