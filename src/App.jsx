@@ -484,8 +484,12 @@ function UploadModal({ empresas, userName, onClose, onDone }) {
   const [busy, setBusy] = useState(false)
   const [prog, setProg] = useState([0, 0])
   const [done, setDone] = useState(false)
-  const addFiles = list => setFiles(prev => { const m = new Map(prev.map(f => [f.name + f.size, f])); for (const f of list) m.set(f.name + f.size, f); return [...m.values()] })
+  const [drag, setDrag] = useState(false)
+  const addFiles = list => setFiles(prev => { const m = new Map(prev.map(f => [f.name + f.size, f])); for (const f of list) if (f.type.startsWith('image/') || f.type === 'application/pdf') m.set(f.name + f.size, f); return [...m.values()] })
   useEffect(() => { if (!emp && empresas.length) setEmp(empresas[0].id) }, [empresas])
+  const previews = useMemo(() => files.map(f => ({ key: f.name + f.size, name: f.name, url: f.type.startsWith('image/') ? URL.createObjectURL(f) : null })), [files])
+  useEffect(() => () => previews.forEach(p => p.url && URL.revokeObjectURL(p.url)), [previews])
+  const onDrop = e => { e.preventDefault(); setDrag(false); if (e.dataTransfer?.files?.length) addFiles([...e.dataTransfer.files]) }
   const submit = async () => {
     if (!emp || !files.length) return
     setBusy(true)
@@ -516,15 +520,29 @@ function UploadModal({ empresas, userName, onClose, onDone }) {
           </select>
 
           <label className="block text-[13px] font-medium text-slate-600 dark:text-slate-300 mt-4 mb-1">Facturas</label>
-          <div className="grid grid-cols-2 gap-2">
-            <label className="cursor-pointer flex items-center justify-center gap-1.5 py-2.5 rounded-xl border border-slate-300 dark:border-slate-700 text-sm font-semibold text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800 transition">
-              <Icon d={I.camera} className="w-4 h-4" /> Hacer fotos
-              <input type="file" accept="image/*" capture="environment" multiple className="hidden" onChange={e => addFiles([...e.target.files])} />
-            </label>
-            <label className="cursor-pointer flex items-center justify-center gap-1.5 py-2.5 rounded-xl border border-slate-300 dark:border-slate-700 text-sm font-semibold text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800 transition">
-              <Icon d={I.files} className="w-4 h-4" /> Elegir
-              <input type="file" accept="image/*,application/pdf" multiple className="hidden" onChange={e => addFiles([...e.target.files])} />
-            </label>
+          <div onDragOver={e => { e.preventDefault(); setDrag(true) }} onDragLeave={() => setDrag(false)} onDrop={onDrop}
+            className={'rounded-xl border-2 border-dashed p-3 transition ' + (drag ? 'border-indigo-500 bg-indigo-50 dark:bg-indigo-500/10' : 'border-slate-300 dark:border-slate-700')}>
+            <div className="grid grid-cols-2 gap-2">
+              <label className="cursor-pointer flex items-center justify-center gap-1.5 py-2.5 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-sm font-semibold text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-700 transition">
+                <Icon d={I.camera} className="w-4 h-4" /> Hacer fotos
+                <input type="file" accept="image/*" capture="environment" multiple className="hidden" onChange={e => addFiles([...e.target.files])} />
+              </label>
+              <label className="cursor-pointer flex items-center justify-center gap-1.5 py-2.5 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-sm font-semibold text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-700 transition">
+                <Icon d={I.files} className="w-4 h-4" /> Elegir
+                <input type="file" accept="image/*,application/pdf" multiple className="hidden" onChange={e => addFiles([...e.target.files])} />
+              </label>
+            </div>
+            <p className="hidden sm:block text-[12px] text-center text-slate-400 mt-2 pointer-events-none">o arrastra y suelta aquí las imágenes/PDF</p>
+            {previews.length > 0 && (
+              <div className="mt-3 flex flex-wrap gap-1.5">
+                {previews.slice(0, 12).map(p => (
+                  <div key={p.key} className="w-12 h-12 rounded-lg overflow-hidden bg-slate-100 dark:bg-slate-800 grid place-items-center shrink-0" title={p.name}>
+                    {p.url ? <img src={p.url} alt="" className="w-full h-full object-cover" /> : <Icon d={I.doc} className="w-5 h-5 text-slate-400" />}
+                  </div>
+                ))}
+                {previews.length > 12 && <div className="w-12 h-12 rounded-lg bg-slate-100 dark:bg-slate-800 grid place-items-center text-[12px] font-semibold text-slate-500 dark:text-slate-400 shrink-0">+{previews.length - 12}</div>}
+              </div>
+            )}
           </div>
           {files.length > 0 && <p className="text-[12px] text-slate-500 dark:text-slate-400 mt-1.5">{files.length} fichero(s) · <button type="button" onClick={() => setFiles([])} className="underline hover:text-rose-600">vaciar</button></p>}
 
