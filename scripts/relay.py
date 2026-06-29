@@ -221,7 +221,12 @@ def process_web_file(tok, e, move_after):
             if content is None:
                 mm = re.match(r"^data:(image/[a-z+]+);base64,(.+)$", str(it.get("img") or ""), re.I)
                 if mm and len(mm.group(2)) > 200:
-                    content = base64.b64decode(mm.group(2)); ext = EXT.get(mm.group(1).lower(), "jpg"); ct = mm.group(1)
+                    b64 = re.sub(r"\s+", "", mm.group(2))
+                    b64 += "=" * (-len(b64) % 4)   # repara padding
+                    try:
+                        content = base64.b64decode(b64, validate=False); ext = EXT.get(mm.group(1).lower(), "jpg"); ct = mm.group(1)
+                    except Exception as ex:
+                        print(f"    ✗ img {iid}: base64 inválido, factura sin foto ({ex})"); content = None
             # redimensiona (ahorra ~15×); si no se puede (p.ej. PDF), sube original
             if content is not None:
                 small = shrink(content)
