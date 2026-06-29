@@ -23,22 +23,56 @@ try:
     PIL_OK = True
 except Exception:
     PIL_OK = False
+try:
+    import pillow_heif
+    pillow_heif.register_heif_opener()   # permite abrir HEIC/HEIF con PIL
+except Exception:
+    pass
+try:
+    from pdf2image import convert_from_bytes   # usa poppler (pdftoppm)
+    PDF_OK = True
+except Exception:
+    PDF_OK = False
+
+
+def _img_to_jpeg(im, maxpx, q):
+    im = ImageOps.exif_transpose(im)
+    if im.mode not in ("RGB", "L"):
+        im = im.convert("RGB")
+    im.thumbnail((maxpx, maxpx))   # ~maxpx de ancho (mantiene proporción)
+    out = io.BytesIO()
+    im.save(out, format="JPEG", quality=q, optimize=True)
+    return out.getvalue()
 
 
 def shrink(content, maxpx=1600, q=82):
-    """Reduce la imagen a JPEG (máx maxpx, corrige orientación EXIF). None si no se puede."""
+    """Reduce una imagen a JPEG (máx maxpx, corrige orientación EXIF). None si no se puede."""
     if not PIL_OK:
         return None
     try:
-        im = Image.open(io.BytesIO(content))
-        im = ImageOps.exif_transpose(im)
-        if im.mode not in ("RGB", "L"):
-            im = im.convert("RGB")
-        im.thumbnail((maxpx, maxpx))
-        out = io.BytesIO()
-        im.save(out, format="JPEG", quality=q, optimize=True)
-        return out.getvalue()
+        return _img_to_jpeg(Image.open(io.BytesIO(content)), maxpx, q)
     except Exception:
+        return None
+
+
+def render_original(content, src, pagina, maxpx=1000, q=80):
+    """Genera el JPEG de la factura desde el fichero original:
+    PDF → renderiza la página `pagina` (~200 dpi); imagen/HEIC → directa. None si falla."""
+    if not PIL_OK:
+        return None
+    try:
+        ext = src.rsplit(".", 1)[-1].lower() if "." in src else ""
+        if ext == "pdf":
+            if not PDF_OK:
+                return None
+            p = int(pagina or 1)
+            pages = convert_from_bytes(content, dpi=200, first_page=p, last_page=p)
+            if not pages:
+                return None
+            return _img_to_jpeg(pages[0], maxpx, q)
+        return _img_to_jpeg(Image.open(io.BytesIO(content)), maxpx, q)
+    except Exception as ex:
+        print(f"    · render falló ({src} p{pagina}): {ex}")
         return None
 
 APP_KEY = os.environ["DROPBOX_APP_KEY"]
@@ -208,46 +242,44 @@ def process_web_file(tok, e, move_after):
             print(f"  · {jid}: {len(items)} items. Muestra item[0]: {muestra}")
         sb_rest("DELETE", f"facturas?job_id=eq.{jid}")   # idempotente
         rows, okimg = [], 0
+        dl_cache, render_cache = {}, {}   # original bytes por fichero · jpeg por (fichero,página)
         for i, it in enumerate(items):
             iid = it.get("id") or f"r{i + 1}"
-            img_path, content, ext, ct = None, None, "jpg", "image/jpeg"
+            img_path, jpeg = None, None
             imgval = str(it.get("img") or "").strip()
             m_b64 = re.match(r"^data:(image/[a-z+]+);base64,(.+)$", imgval, re.I)
-            # 1) img como RUTA relativa bajo web/ (nuevo contrato: JPEG real ya legible)
-            if imgval and not imgval.startswith("data:"):
-                rel = imgval.lstrip("/")
-                ext = rel.rsplit(".", 1)[-1].lower() if "." in rel else "jpg"; ct = CT.get(ext, "image/jpeg")
-                try:
-                    content = dbx_download(tok, f"{WEB}/{rel}")
-                except Exception:
-                    print(f"    · img {iid}: no encontrada en web/{rel}")
-            # 2) base64 embebido (compat; ignora placeholders diminutos 1x1, repara padding)
-            if content is None and m_b64 and len(m_b64.group(2)) > 200:
+            # A) compat: base64 embebido en 'img' (lotes antiguos)
+            if m_b64 and len(m_b64.group(2)) > 200:
                 b64 = re.sub(r"\s+", "", m_b64.group(2)); b64 += "=" * (-len(b64) % 4)
                 try:
-                    content = base64.b64decode(b64, validate=False); ext = EXT.get(m_b64.group(1).lower(), "jpg"); ct = m_b64.group(1)
+                    jpeg = shrink(base64.b64decode(b64, validate=False))
                 except Exception as ex:
-                    print(f"    ✗ img {iid}: base64 inválido, factura sin foto ({ex})"); content = None
-            # 3) fallback: foto original en Dropbox /entrada (por nombre de fichero)
-            if content is None:
-                src = _src_filename(it)
+                    print(f"    ✗ img {iid}: base64 inválido ({ex})")
+            # B) nuevo contrato: el relay RENDERiza desde el fichero original en /entrada
+            if jpeg is None:
+                src = it.get("src") or _src_filename(it)
                 if src:
-                    safe = re.sub(r"[^\w.\-]+", "_", src)
-                    ext = safe.rsplit(".", 1)[-1].lower() if "." in safe else "jpg"; ct = CT.get(ext, "image/jpeg")
-                    try:
-                        content = dbx_download(tok, f"{ENTRADA}/{emp}/{jid}/{safe}")
-                    except Exception:
-                        print(f"    · img {iid}: no encontrada en /entrada ({src})")
-            # redimensiona (ahorra ~15×); si no se puede (p.ej. PDF), sube original
-            if content is not None:
-                small = shrink(content)
-                if small is not None:
-                    content, ext, ct = small, "jpg", "image/jpeg"
-                img_path = f"{jid}/{iid}.{ext}"
+                    pagina = it.get("pagina") or 1
+                    safe = re.sub(r"[^\w.\-]+", "_", str(src))
+                    key = (safe, pagina)
+                    if key in render_cache:
+                        jpeg = render_cache[key]
+                    else:
+                        if safe not in dl_cache:
+                            try:
+                                dl_cache[safe] = dbx_download(tok, f"{ENTRADA}/{emp}/{jid}/{safe}")
+                            except Exception:
+                                dl_cache[safe] = None; print(f"    · img {iid}: original no encontrado ({safe})")
+                        orig = dl_cache[safe]
+                        jpeg = render_original(orig, safe, pagina) if orig is not None else None
+                        render_cache[key] = jpeg
+            # subir la miniatura
+            if jpeg is not None:
+                img_path = f"{jid}/{iid}.jpg"
                 try:
-                    sb_storage_upload("facturas", img_path, content, ct); okimg += 1
+                    sb_storage_upload("facturas", img_path, jpeg, "image/jpeg"); okimg += 1
                 except Exception as ex:
-                    print(f"    ✗ img {iid}: {ex}"); img_path = None
+                    print(f"    ✗ img {iid}: subida ({ex})"); img_path = None
             rows.append({
                 "job_id": jid, "tanda": jid, "empresa": emp, "item_id": iid, "img_path": img_path,
                 "rot0": int(tonum(it.get("rot0")) or 0), "fecha": it.get("fecha"), "proveedor": it.get("proveedor"),
