@@ -209,7 +209,7 @@ emite solo datos + `src` (nombre EXACTO del fichero de entrada) + `pagina` (nº 
 ```
 
 El **relay ↓** descarga `entrada/<EMP>/<JOB_ID>/<src>`, renderiza la página `pagina`
-(PDF → poppler ~200 dpi; HEIC/imagen → directa), reduce a ~1000 px JPEG q80 y la sube a
+(PDF → PyMuPDF (fitz) ~200 dpi; HEIC/imagen → directa), reduce a ~1000 px JPEG q80 y la sube a
 Storage `facturas/<JOB_ID>/<id>.jpg`. Cachea por fichero y por (fichero,página). Mantiene
 compatibilidad con `img` base64 de lotes antiguos. Si una imagen falla, esa factura queda
 sin foto pero el lote entra completo.
