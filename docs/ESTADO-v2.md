@@ -165,3 +165,28 @@ Salida (la escribe Cowork, la lee el relay):
    aparece `/facturas AGM/entrada/<EMP>/<JOB_ID>/` con los ficheros.
 5. Cuando Cowork deje el `<JOB_ID>.json` en `/web`, el siguiente relay lo volcará y el job
    pasará a `listo` (la app se actualiza por Realtime).
+
+---
+
+## Actualización (PDFs A4 + imágenes fiables)
+
+**A. Imágenes/JSON por código (lado Cowork/SKILL).** El modelo solo extrae datos; un paso
+en Python hace la imagen (`pdftoppm` ~200 dpi / HEIC con `pillow_heif`, reorientar, ~1200–1500 px
+ancho JPEG q80, `base64`/escritura por código, `json.dump`). Un LLM no puede teclear base64
+grande de forma fiable (salían miniaturas de ~1 KB y truncadas).
+
+**B. Imagen como FICHERO, no base64 (recomendado).** En `web/<JOB_ID>.json`, cada item lleva
+`"img"` = ruta relativa, y el JPEG real va aparte:
+```
+web/<JOB_ID>.json     → item.img = "img/<JOB_ID>/<id>.jpg"   (no base64)
+web/img/<JOB_ID>/<id>.jpg   → el JPEG (~1200–1500 px, q80)
+```
+El relay ↓ ya soporta los dos: si `img` es `data:image/...;base64,` decodifica (compat); si es
+ruta, descarga `web/<img>` y la sube a Storage. Si una imagen falla, esa factura queda sin foto
+pero el lote entra completo. Al terminar, el relay borra `web/img/<JOB_ID>/`.
+
+**C.** Relay ↑: si no copia TODOS los ficheros a Dropbox, deja el job en `en_cola` (no lo marca
+`procesando`) para reintentar. **D.** Estados exactos `en_cola|procesando|listo|error` (CHECK en
+Postgres). **E.** Empresa unificada: **ARGADRIL** (la app ya lo usa; alinear Dropbox y SKILL).
+**F.** El contador ya no promete "próxima en X min" (el cron de GitHub no es puntual): muestra
+"última ejecución hace Y · se ejecuta de forma periódica" + aviso "puede estar pausada".
