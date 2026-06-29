@@ -175,8 +175,11 @@ def relay_up(tok):
                 ok += 1
             except Exception as e:
                 print(f"  ✗ {name}: {e}")
-        sb_rest("PATCH", f"jobs?id=eq.{jid}", {"estado": "procesando"})
-        print(f"  ✓ {jid} ({emp}): {ok}/{len(names)} ficheros → Dropbox, job=procesando")
+        if ok == len(names):
+            sb_rest("PATCH", f"jobs?id=eq.{jid}", {"estado": "procesando"})
+            print(f"  ✓ {jid} ({emp}): {ok}/{len(names)} ficheros → Dropbox, job=procesando")
+        else:
+            print(f"  ⚠ {jid} ({emp}): {ok}/{len(names)} copiados, lo dejo en_cola para reintentar")
 
 
 # ---------------- Relay ↓ (Dropbox /web → Supabase) ----------------
@@ -208,25 +211,33 @@ def process_web_file(tok, e, move_after):
         for i, it in enumerate(items):
             iid = it.get("id") or f"r{i + 1}"
             img_path, content, ext, ct = None, None, "jpg", "image/jpeg"
-            # 1) foto REAL desde Dropbox /entrada (por nombre de fichero original)
-            src = _src_filename(it)
-            if src:
-                safe = re.sub(r"[^\w.\-]+", "_", src)
-                ext = safe.rsplit(".", 1)[-1].lower() if "." in safe else "jpg"; ct = CT.get(ext, "image/jpeg")
+            imgval = str(it.get("img") or "").strip()
+            m_b64 = re.match(r"^data:(image/[a-z+]+);base64,(.+)$", imgval, re.I)
+            # 1) img como RUTA relativa bajo web/ (nuevo contrato: JPEG real ya legible)
+            if imgval and not imgval.startswith("data:"):
+                rel = imgval.lstrip("/")
+                ext = rel.rsplit(".", 1)[-1].lower() if "." in rel else "jpg"; ct = CT.get(ext, "image/jpeg")
                 try:
-                    content = dbx_download(tok, f"{ENTRADA}/{emp}/{jid}/{safe}")
+                    content = dbx_download(tok, f"{WEB}/{rel}")
                 except Exception:
-                    print(f"    · img {iid}: no encontrada en /entrada ({src})")
-            # 2) fallback: base64 embebido (ignora placeholders diminutos tipo 1x1)
+                    print(f"    · img {iid}: no encontrada en web/{rel}")
+            # 2) base64 embebido (compat; ignora placeholders diminutos 1x1, repara padding)
+            if content is None and m_b64 and len(m_b64.group(2)) > 200:
+                b64 = re.sub(r"\s+", "", m_b64.group(2)); b64 += "=" * (-len(b64) % 4)
+                try:
+                    content = base64.b64decode(b64, validate=False); ext = EXT.get(m_b64.group(1).lower(), "jpg"); ct = m_b64.group(1)
+                except Exception as ex:
+                    print(f"    ✗ img {iid}: base64 inválido, factura sin foto ({ex})"); content = None
+            # 3) fallback: foto original en Dropbox /entrada (por nombre de fichero)
             if content is None:
-                mm = re.match(r"^data:(image/[a-z+]+);base64,(.+)$", str(it.get("img") or ""), re.I)
-                if mm and len(mm.group(2)) > 200:
-                    b64 = re.sub(r"\s+", "", mm.group(2))
-                    b64 += "=" * (-len(b64) % 4)   # repara padding
+                src = _src_filename(it)
+                if src:
+                    safe = re.sub(r"[^\w.\-]+", "_", src)
+                    ext = safe.rsplit(".", 1)[-1].lower() if "." in safe else "jpg"; ct = CT.get(ext, "image/jpeg")
                     try:
-                        content = base64.b64decode(b64, validate=False); ext = EXT.get(mm.group(1).lower(), "jpg"); ct = mm.group(1)
-                    except Exception as ex:
-                        print(f"    ✗ img {iid}: base64 inválido, factura sin foto ({ex})"); content = None
+                        content = dbx_download(tok, f"{ENTRADA}/{emp}/{jid}/{safe}")
+                    except Exception:
+                        print(f"    · img {iid}: no encontrada en /entrada ({src})")
             # redimensiona (ahorra ~15×); si no se puede (p.ej. PDF), sube original
             if content is not None:
                 small = shrink(content)
@@ -248,6 +259,8 @@ def process_web_file(tok, e, move_after):
         sb_rest("PATCH", f"jobs?id=eq.{jid}", {"estado": "listo", "terminado": "now()"})  # n_facturas se deja = subidas
         if move_after:
             dbx_move(tok, e["path_lower"], f"{WEB}/procesados/{name}")
+            try: dbx_rpc(tok, "files/delete_v2", {"path": f"{WEB}/img/{jid}"})  # limpia las imágenes ya volcadas
+            except Exception: pass
         print(f"  ✓ {jid}: {len(rows)} facturas ({okimg} imágenes) → Supabase, job=listo")
     except Exception as ex:
         print(f"  ✗ {jid}: ERROR procesando → {ex}")

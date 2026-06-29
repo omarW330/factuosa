@@ -321,19 +321,16 @@ function StatusBar({ heartbeat }) {
   if (!heartbeat) return null
   const last = heartbeat.last_run ? new Date(heartbeat.last_run).getTime() : null
   const intMin = heartbeat.interval_min || 15
-  const now = Date.now()
-  const nextMin = last != null ? Math.round((last + intMin * 60000 - now) / 60000) : null
-  const sinceMin = last != null ? Math.round((now - last) / 60000) : null
-  const paused = last != null && sinceMin > intMin * 2 + 8
+  const sinceMin = last != null ? Math.round((Date.now() - last) / 60000) : null
+  const sinceTxt = sinceMin == null ? null : sinceMin < 1 ? 'hace un momento' : sinceMin < 60 ? `hace ${sinceMin} min` : sinceMin < 1440 ? `hace ${Math.round(sinceMin / 60)} h` : `hace ${Math.round(sinceMin / 1440)} d`
+  const paused = sinceMin != null && sinceMin > Math.max(60, intMin * 3)   // bastante más que el intervalo
   return (
     <div className="rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-4 shadow-sm flex items-center gap-3">
       <div className={'grid place-items-center w-10 h-10 rounded-xl ' + (heartbeat.procesando ? 'bg-indigo-100 text-indigo-600' : 'bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400')}><Icon d={I.clock} /></div>
       <div className="min-w-0">
         <div className="text-sm font-semibold text-slate-700 dark:text-slate-200">Automática (IA){heartbeat.procesando ? ' · procesando…' : ''}</div>
         <div className="text-[12px] text-slate-500 dark:text-slate-400">
-          {last == null ? 'aún no se ha ejecutado'
-            : nextMin > 0 ? `próxima ejecución en ~${nextMin} min` : 'ejecución inminente'}
-          {last != null && <> · última {sinceMin <= 0 ? 'hace un momento' : 'hace ' + sinceMin + ' min'}</>}
+          {last == null ? 'aún no se ha ejecutado' : <>última ejecución {sinceTxt} · se ejecuta de forma periódica</>}
         </div>
       </div>
       {paused && <span className="ml-auto text-[12px] text-amber-600 font-medium text-right leading-tight">⚠ puede estar<br />pausada</span>}
