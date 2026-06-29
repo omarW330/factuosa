@@ -29,7 +29,7 @@ try:
 except Exception:
     pass
 try:
-    from pdf2image import convert_from_bytes   # usa poppler (pdftoppm)
+    import fitz   # PyMuPDF: render de PDF sin dependencias del sistema (no necesita poppler)
     PDF_OK = True
 except Exception:
     PDF_OK = False
@@ -57,20 +57,20 @@ def shrink(content, maxpx=1600, q=82):
 
 def render_original(content, src, pagina, maxpx=1000, q=80):
     """Genera el JPEG de la factura desde el fichero original:
-    PDF → renderiza la página `pagina` (~200 dpi); imagen/HEIC → directa. None si falla."""
+    PDF → renderiza la página `pagina` (~200 dpi, PyMuPDF); imagen/HEIC → directa. None si falla."""
     if not PIL_OK:
         return None
     try:
-        ext = src.rsplit(".", 1)[-1].lower() if "." in src else ""
-        if ext == "pdf":
+        if src.lower().endswith(".pdf"):
             if not PDF_OK:
                 return None
-            p = int(pagina or 1)
-            pages = convert_from_bytes(content, dpi=200, first_page=p, last_page=p)
-            if not pages:
-                return None
-            return _img_to_jpeg(pages[0], maxpx, q)
-        return _img_to_jpeg(Image.open(io.BytesIO(content)), maxpx, q)
+            doc = fitz.open(stream=content, filetype="pdf")
+            page = doc[max(0, int(pagina or 1) - 1)]
+            pix = page.get_pixmap(dpi=200)
+            im = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
+        else:
+            im = Image.open(io.BytesIO(content))
+        return _img_to_jpeg(im, maxpx, q)
     except Exception as ex:
         print(f"    · render falló ({src} p{pagina}): {ex}")
         return None

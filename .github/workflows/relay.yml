@@ -19,8 +19,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-      - run: sudo apt-get update && sudo apt-get install -y poppler-utils
-      - run: pip install --quiet Pillow pdf2image pillow-heif
+      - run: pip install --quiet pymupdf Pillow pillow-heif
       - run: python scripts/relay.py
         env:
           DROPBOX_APP_KEY: ${{ secrets.DROPBOX_APP_KEY }}
