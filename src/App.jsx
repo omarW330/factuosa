@@ -58,6 +58,7 @@ const I = {
   fit: <><path d="M3 8V5a2 2 0 0 1 2-2h3M21 8V5a2 2 0 0 0-2-2h-3M3 16v3a2 2 0 0 0 2 2h3M21 16v3a2 2 0 0 1-2 2h-3" /></>,
   x: <path d="M18 6 6 18M6 6l12 12" />,
   reset: <><path d="M3 2v6h6" /><path d="M3 13a9 9 0 1 0 3-7.7L3 8" /></>,
+  refresh: <><path d="M21 12a9 9 0 1 1-2.64-6.36" /><path d="M21 3v6h-6" /></>,
   grid: <><rect x="3" y="3" width="7" height="7" rx="1" /><rect x="14" y="3" width="7" height="7" rx="1" /><rect x="3" y="14" width="7" height="7" rx="1" /><rect x="14" y="14" width="7" height="7" rx="1" /></>,
   doc: <><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" /><path d="M14 2v6h6" /></>,
   chevR: <path d="m9 18 6-6-6-6" />,
@@ -354,6 +355,8 @@ function Dashboard({ jobs, stats, heartbeat, sync, session, userName, loaded, th
             <p className="text-[13px] text-slate-500 dark:text-slate-400">{jobs.length} {jobs.length === 1 ? 'lote' : 'lotes'}</p>
           </div>
           <div className="ml-auto self-start flex items-center gap-2">
+            <button onClick={() => location.replace(location.pathname + '?r=' + Date.now())} title="Actualizar la app (recarga sin caché)"
+              className="grid place-items-center w-9 h-9 rounded-xl border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition"><Icon d={I.refresh} className="w-[18px] h-[18px]" /></button>
             <ThemeToggle theme={theme} onToggle={onToggleTheme} />
             <div className="flex flex-col items-end gap-1.5">
               <SyncBadge sync={sync} />
