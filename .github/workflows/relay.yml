@@ -8,6 +8,10 @@ on:
         description: 'Re-vuelca también los lotes ya procesados (/web/procesados)'
         type: boolean
         default: false
+      reprocess_job:
+        description: 'Re-vuelca SOLO este JOB_ID de /web/procesados (deja el resto intacto)'
+        type: string
+        default: ''
 concurrency:
   group: relay
   cancel-in-progress: false
@@ -28,3 +32,4 @@ jobs:
           VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
           REPROCESS: ${{ (github.event_name == 'workflow_dispatch' && inputs.reprocess) && '1' || '' }}
+          REPROCESS_JOB: ${{ (github.event_name == 'workflow_dispatch' && inputs.reprocess_job) || '' }}

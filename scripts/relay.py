@@ -315,6 +315,12 @@ def relay_down(tok):
         for e in dbx_list(tok, f"{WEB}/procesados"):
             if e.get(".tag") == "file" and _is_job_json(e["name"]):
                 process_web_file(tok, e, False)
+    job_re = os.environ.get("REPROCESS_JOB")
+    if job_re:
+        print(f"  (REPROCESS_JOB: re-vuelco solo {job_re})")
+        e = {"name": f"{job_re}.json", "path_lower": f"{WEB}/procesados/{job_re}.json".lower(), ".tag": "file"}
+        if _is_job_json(e["name"]):
+            process_web_file(tok, e, False)
 
 
 def volcar_status(tok, path):
