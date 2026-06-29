@@ -81,6 +81,30 @@ const I = {
   alert: <><path d="M12 9v4M12 17h.01" /><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z" /></>,
 }
 
+/* aviso automático cuando hay una versión nueva desplegada (evita quedarse cacheado en iOS) */
+function UpdateBanner() {
+  const [show, setShow] = useState(false)
+  useEffect(() => {
+    const cur = [...document.scripts].map(s => s.src).find(s => /assets\/index-.*\.js/.test(s))
+    if (!cur) return
+    let alive = true
+    const check = () => fetch('index.html?cc=' + Date.now(), { cache: 'no-store' })
+      .then(r => r.text())
+      .then(html => { if (!alive) return; const m = html.match(/assets\/index-[A-Za-z0-9_-]+\.js/); if (m && !cur.includes(m[0])) setShow(true) })
+      .catch(() => {})
+    check()
+    const i = setInterval(check, 5 * 60 * 1000)   // re-chequea cada 5 min
+    return () => { alive = false; clearInterval(i) }
+  }, [])
+  if (!show) return null
+  return (
+    <div className="fixed top-0 inset-x-0 z-[90] safe-t brand-grad text-white text-sm font-semibold flex items-center justify-center gap-3 py-2 px-4 shadow-lg">
+      <span>✨ Nueva versión disponible</span>
+      <button onClick={() => location.replace(location.pathname + '?r=' + Date.now())} className="px-3 py-1 rounded-lg bg-white/25 hover:bg-white/40 transition">Actualizar</button>
+    </div>
+  )
+}
+
 function ThemeToggle({ theme, onToggle, className = '' }) {
   return (
     <button onClick={onToggle} title={theme === 'dark' ? 'Modo claro' : 'Modo oscuro'}
@@ -280,10 +304,11 @@ export default function App() {
   const copyTable = async () => { try { await navigator.clipboard.writeText(tsvTable(approvedRows())); alert(`${cheer(userName)} Tabla copiada, pégala en Excel.`) } catch (e) { alert('No se pudo copiar automáticamente.') } }
 
   if (syncEnabled && !authReady) return <div className="min-h-full grid place-items-center text-slate-400">Cargando…</div>
-  if (syncEnabled && !session) return <Login theme={theme} onToggleTheme={toggleTheme} />
+  if (syncEnabled && !session) return <><UpdateBanner /><Login theme={theme} onToggleTheme={toggleTheme} /></>
 
   return (
     <div className="min-h-full">
+      <UpdateBanner />
       {view === 'dashboard' &&
         <Dashboard jobs={jobs} stats={stats} heartbeat={heartbeat} sync={sync} session={session} userName={userName} loaded={loaded}
           theme={theme} onToggleTheme={toggleTheme}
