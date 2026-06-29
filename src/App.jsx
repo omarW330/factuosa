@@ -256,7 +256,7 @@ export default function App() {
     }
     return m
   }), [])
-  const setField = (id, k, raw, num) => { let v = raw; if (num) { v = parseFloat(String(raw).replace(',', '.')); if (isNaN(v)) v = undefined } else if (k === 'fecha') v = dmyFromIso(raw); update(id, { [k]: v }) }
+  const setField = (id, k, raw, num) => { update(id, { [k]: k === 'fecha' ? dmyFromIso(raw) : raw }) }   // guarda en crudo; Nv() parsea al leer
   const mark = (id, status) => update(id, { status })
   const rotate = id => { const it = items.find(x => x.id === id); update(id, { rot: (rotOf(it, marks) + 90) % 360 }) }
   const reset = id => update(id, { status: undefined, base: undefined, iva: undefined, total: undefined, fecha: undefined, proveedor: undefined, num: undefined, obs: undefined })
@@ -672,6 +672,8 @@ function Row({ label, children }) {
 function Fields({ it, marks, setField, aliases, onAlias, dup, compact }) {
   const cuadra = cuadraOf(it, marks)
   const s = marks[it.id] || {}
+  // importes: formatea (2 decimales) cuando viene de la IA sin tocar; deja el texto en crudo mientras se edita
+  const nv = k => { const v = F(it, marks, k); return v == null || v === '' ? '' : (typeof v === 'number' ? v.toFixed(2) : v) }
   const provVal = F(it, marks, 'proveedor') || ''
   const sug = aliases ? aliases[normProv(it.proveedor)] : null
   const showSug = sug && sug !== provVal && provVal === (it.proveedor || '')   // original sin tocar y hay corrección aprendida
@@ -709,9 +711,9 @@ function Fields({ it, marks, setField, aliases, onAlias, dup, compact }) {
         </div>
       )}
       <Row label="Nº factura"><input className={INP + ' flex-1 min-w-0'} value={F(it, marks, 'num') || ''} onChange={e => setField(it.id, 'num', e.target.value, false)} /></Row>
-      <Row label="Base"><input inputMode="decimal" className={INP + ' w-28 text-right tabular-nums'} value={Nv(it, marks, 'base').toFixed(2)} onChange={e => setField(it.id, 'base', e.target.value, true)} /></Row>
-      <Row label={'IVA/IPSI · ' + (it.timp || '')}><input inputMode="decimal" className={INP + ' w-28 text-right tabular-nums'} value={Nv(it, marks, 'iva').toFixed(2)} onChange={e => setField(it.id, 'iva', e.target.value, true)} /></Row>
-      <Row label="Total"><input inputMode="decimal" className={INP + ' w-28 text-right tabular-nums font-semibold'} value={Nv(it, marks, 'total').toFixed(2)} onChange={e => setField(it.id, 'total', e.target.value, true)} /></Row>
+      <Row label="Base"><input inputMode="decimal" className={INP + ' w-28 text-right tabular-nums'} value={nv('base')} onChange={e => setField(it.id, 'base', e.target.value, true)} /></Row>
+      <Row label={'IVA/IPSI · ' + (it.timp || '')}><input inputMode="decimal" className={INP + ' w-28 text-right tabular-nums'} value={nv('iva')} onChange={e => setField(it.id, 'iva', e.target.value, true)} /></Row>
+      <Row label="Total"><input inputMode="decimal" className={INP + ' w-28 text-right tabular-nums font-semibold'} value={nv('total')} onChange={e => setField(it.id, 'total', e.target.value, true)} /></Row>
       <div className="pt-2">
         <span className="text-[13px] text-slate-500 dark:text-slate-400">Observaciones</span>
         <textarea className={INP + ' w-full mt-1 min-h-[44px] resize-y'} value={F(it, marks, 'obs') || ''} onChange={e => setField(it.id, 'obs', e.target.value, false)} />
