@@ -190,3 +190,26 @@ pero el lote entra completo. Al terminar, el relay borra `web/img/<JOB_ID>/`.
 Postgres). **E.** Empresa unificada: **ARGADRIL** (la app ya lo usa; alinear Dropbox y SKILL).
 **F.** El contador ya no promete "próxima en X min" (el cron de GitHub no es puntual): muestra
 "última ejecución hace Y · se ejecuta de forma periódica" + aviso "puede estar pausada".
+
+---
+
+## Contrato VIGENTE (def.) — las imágenes las genera el RELAY
+
+El conector Dropbox de Cowork solo escribe TEXTO. Por eso **Cowork NO manda imágenes**:
+emite solo datos + `src` (nombre EXACTO del fichero de entrada) + `pagina` (nº de página
+1-based del PDF; para imágenes, 1). Sin `img`, sin base64.
+
+```json
+{ "items": [ {
+  "id": "<JOB_ID>-3", "src": "GEOTECNIA_29.06.pdf", "pagina": 3, "rot0": 0,
+  "fecha": "31/05/2026", "proveedor": "...", "num": "...",
+  "base": 43.45, "iva": 1.74, "total": 45.19, "timp": "IPSI 4%",
+  "conf": "media", "flag": true, "obs": "..."
+} ] }
+```
+
+El **relay ↓** descarga `entrada/<EMP>/<JOB_ID>/<src>`, renderiza la página `pagina`
+(PDF → poppler ~200 dpi; HEIC/imagen → directa), reduce a ~1000 px JPEG q80 y la sube a
+Storage `facturas/<JOB_ID>/<id>.jpg`. Cachea por fichero y por (fichero,página). Mantiene
+compatibilidad con `img` base64 de lotes antiguos. Si una imagen falla, esa factura queda
+sin foto pero el lote entra completo.
