@@ -240,7 +240,6 @@ def process_web_file(tok, e, move_after):
         if items:
             muestra = {k: ((str(v)[:24] + "…") if k == "img" else v) for k, v in items[0].items()}
             print(f"  · {jid}: {len(items)} items. Muestra item[0]: {muestra}")
-        sb_rest("DELETE", f"facturas?job_id=eq.{jid}")   # idempotente
         rows, okimg = [], 0
         dl_cache, render_cache = {}, {}   # original bytes por fichero · jpeg por (fichero,página)
         for i, it in enumerate(items):
@@ -287,7 +286,13 @@ def process_web_file(tok, e, move_after):
                 "timp": it.get("timp"), "conf": it.get("conf"), "flag": bool(it.get("flag")), "obs": it.get("obs"),
             })
         if rows:
-            sb_rest("POST", "facturas", rows)
+            # UPSERT por (tanda,item_id): conserva el id de la factura → 'revisiones' sobrevive al reprocesar
+            sb_rest("POST", "facturas?on_conflict=tanda,item_id", rows, prefer="resolution=merge-duplicates")
+            # borra solo las facturas que ya no están en el JSON (huérfanas), sin tocar las conservadas
+            keep = ",".join('"' + str(r["item_id"]).replace('"', '') + '"' for r in rows)
+            sb_rest("DELETE", f"facturas?job_id=eq.{jid}&item_id=not.in.({keep})")
+        else:
+            sb_rest("DELETE", f"facturas?job_id=eq.{jid}")
         sb_rest("PATCH", f"jobs?id=eq.{jid}", {"estado": "listo", "terminado": "now()"})  # n_facturas se deja = subidas
         if move_after:
             dbx_move(tok, e["path_lower"], f"{WEB}/procesados/{name}")
