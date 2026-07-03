@@ -1015,7 +1015,7 @@ function ReviewMode({ items, marks, setField, aliases, onAlias, dupSet, setRevie
             <div className="flex justify-between"><span className="text-slate-400">Sin marcar</span><b>{pen}</b></div>
             <div className="flex justify-between"><span className="text-slate-400">⏱ Tiempo</span><b>{fmtT(ms)} · {Math.round(ms / 1000 / Math.max(1, items.length))}s/factura</b></div>
           </div>
-          <button onClick={exportXlsx} className="mt-6 w-full py-3.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 font-bold flex items-center justify-center gap-2"><Icon d={I.download} className="w-5 h-5" /> Exportar Excel</button>
+          <button onClick={() => exportXlsx(true)} className="mt-6 w-full py-3.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 font-bold flex items-center justify-center gap-2"><Icon d={I.download} className="w-5 h-5" /> Exportar verificadas</button>
           <div className="flex gap-2 mt-2">
             <button onClick={() => { setIdx(0); setDone(false) }} className="flex-1 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 font-semibold">↺ Repetir</button>
             <button onClick={() => setReview(false)} className="flex-1 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 font-semibold">Salir</button>
@@ -1202,7 +1202,7 @@ function DoneOverlay({ ver, total, userName, onExport, onClose, onBack }) {
         <div className="text-6xl mb-2">🎉</div>
         <h2 className="text-xl font-bold text-slate-900 dark:text-slate-100 dark:text-slate-100">{cheer(userName)}</h2>
         <p className="text-slate-500 dark:text-slate-400 mt-1">Todo verificado · {ver} de {total} facturas. ¡Gran trabajo! 💪</p>
-        <button onClick={onExport} className="mt-6 w-full py-3.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold flex items-center justify-center gap-2"><Icon d={I.download} className="w-5 h-5" /> Exportar Excel</button>
+        <button onClick={() => onExport(true)} className="mt-6 w-full py-3.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold flex items-center justify-center gap-2"><Icon d={I.download} className="w-5 h-5" /> Exportar verificadas</button>
         <div className="flex gap-2 mt-2">
           <button onClick={onClose} className="flex-1 py-2.5 rounded-xl bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 font-semibold text-slate-700 dark:text-slate-200">Seguir</button>
           <button onClick={onBack} className="flex-1 py-2.5 rounded-xl bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 font-semibold text-slate-700 dark:text-slate-200">Al panel</button>
