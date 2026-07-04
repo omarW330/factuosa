@@ -796,6 +796,8 @@ function Fields({ it, marks, setField, aliases, onAlias, dup, compact }) {
 function ListView({ sel, items, marks, setField, mark, reset, rotate, sync, userName, itemsLoading, aliases, onAlias, dupSet, exportXlsx, copyTable, onBack, onDelete }) {
   const [filter, setFilter] = useState('todas')
   const [q, setQ] = useState('')
+  const [matchIdx, setMatchIdx] = useState(-1)   // coincidencia activa al navegar con Enter
+  const cardRefs = useRef({})                     // id -> nodo de la tarjeta (para hacer scroll)
   const [modalId, setModalId] = useState(null)
   const [review, setReview] = useState(false)
   const [showDone, setShowDone] = useState(false)
@@ -825,6 +827,17 @@ function ListView({ sel, items, marks, setField, mark, reset, rotate, sync, user
     if (ql) { const hay = [F(it, marks, 'proveedor'), F(it, marks, 'num'), F(it, marks, 'obs')].join(' ').toLowerCase(); if (!hay.includes(ql)) return false }
     return true
   })
+
+  // Enter → siguiente coincidencia, Shift+Enter → anterior (hace scroll y la resalta)
+  useEffect(() => { setMatchIdx(-1) }, [ql, filter])
+  const go = dir => {
+    const n = visible.length; if (!n) return
+    const cur = matchIdx < 0 ? (dir > 0 ? -1 : 0) : matchIdx
+    const next = (cur + dir + n) % n
+    setMatchIdx(next)
+    cardRefs.current[visible[next].id]?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+  }
+  const activeId = ql && matchIdx >= 0 && matchIdx < visible.length ? visible[matchIdx].id : null
 
   const FilterBtn = ({ id, label, n }) => (
     <button onClick={() => setFilter(id)} className={'px-3 py-1.5 rounded-full text-[13px] font-medium whitespace-nowrap transition ' + (filter === id ? 'bg-indigo-600 text-white shadow' : 'bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-300 border border-slate-200 dark:border-slate-700 hover:border-indigo-300')}>{label}{n != null && <span className="ml-1 opacity-70">{n}</span>}</button>
@@ -862,9 +875,11 @@ function ListView({ sel, items, marks, setField, mark, reset, rotate, sync, user
             {autoOk.length > 0 && <button onClick={quickVerify} title="Verifica las que cuadran y son de confianza alta" className="flex items-center gap-1 px-3 py-1.5 rounded-full text-[13px] font-semibold whitespace-nowrap bg-emerald-600 text-white hover:bg-emerald-700 transition"><Icon d={I.check} className="w-3.5 h-3.5" /> {autoOk.length} OK</button>}
             <div className="relative ml-auto flex-1 min-w-[160px] max-w-[280px]">
               <Icon d={I.search} className="w-4 h-4 absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
-              <input value={q} onChange={e => setQ(e.target.value)} placeholder="Buscar proveedor, nº, obs…" className="w-full pl-8 pr-14 py-1.5 rounded-full border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 text-[13px] focus:border-indigo-500 focus:ring-2 focus:ring-indigo-200 outline-none" />
+              <input value={q} onChange={e => setQ(e.target.value)}
+                onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); go(e.shiftKey ? -1 : 1) } else if (e.key === 'Escape') setQ('') }}
+                placeholder="Buscar proveedor, nº, obs…" title="Enter: siguiente · Mayús+Enter: anterior" className="w-full pl-8 pr-16 py-1.5 rounded-full border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 text-[13px] focus:border-indigo-500 focus:ring-2 focus:ring-indigo-200 outline-none" />
               {q && <div className="absolute right-2 top-1/2 -translate-y-1/2 flex items-center gap-1.5">
-                <span className={'text-[11px] font-bold tabular-nums ' + (visible.length ? 'text-indigo-600 dark:text-indigo-400' : 'text-rose-500')}>{visible.length}</span>
+                <span className={'text-[11px] font-bold tabular-nums ' + (visible.length ? 'text-indigo-600 dark:text-indigo-400' : 'text-rose-500')}>{visible.length ? (matchIdx >= 0 ? `${matchIdx + 1}/${visible.length}` : visible.length) : 0}</span>
                 <button onClick={() => setQ('')} title="Limpiar" className="grid place-items-center w-5 h-5 rounded-full bg-slate-200 dark:bg-slate-700 text-slate-600 dark:text-slate-300 hover:bg-slate-300 dark:hover:bg-slate-600"><Icon d={I.x} className="w-3 h-3" /></button>
               </div>}
             </div>
@@ -877,7 +892,7 @@ function ListView({ sel, items, marks, setField, mark, reset, rotate, sync, user
         {itemsLoading && items.length === 0 && [0, 1, 2].map(i => <Skel key={i} className="h-56 sm:h-64" />)}
         {!itemsLoading && items.length === 0 && <p className="text-slate-400 py-10 text-center">{sel?.estado === 'listo' ? 'Este lote no tiene facturas.' : 'El lote aún se está procesando…'}</p>}
         {items.length > 0 && visible.length === 0 && <p className="text-slate-400 py-10 text-center">Sin resultados para este filtro.</p>}
-        {visible.map(it => <InvoiceCard key={it.id} it={it} marks={marks} setField={setField} aliases={aliases} onAlias={onAlias} dup={dupSet && dupSet.has(it.id)} mark={mark} reset={reset} rotate={rotate} q={ql} onZoom={() => setModalId(it.id)} />)}
+        {visible.map(it => <div key={it.id} ref={el => { if (el) cardRefs.current[it.id] = el; else delete cardRefs.current[it.id] }} className={'scroll-mt-40 rounded-2xl transition ' + (it.id === activeId ? 'ring-2 ring-indigo-500 ring-offset-2 ring-offset-slate-50 dark:ring-offset-slate-950' : '')}><InvoiceCard it={it} marks={marks} setField={setField} aliases={aliases} onAlias={onAlias} dup={dupSet && dupSet.has(it.id)} mark={mark} reset={reset} rotate={rotate} q={ql} onZoom={() => setModalId(it.id)} /></div>)}
       </div>
 
       {/* botón flotante de revisión en móvil */}
