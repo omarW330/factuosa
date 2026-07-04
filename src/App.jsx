@@ -3,7 +3,7 @@ import { buildXlsx, tsvTable } from './xlsx.js'
 import { syncEnabled, getSession, onAuth, signIn, signOut, userLabel,
   listJobs, loadFacturasByJob, loadJobStats, deleteJob, loadRevisiones, saveRevision,
   loadAllFacturas, loadAllRevisiones, listEmpresas, createJob, uploadFiles, loadStatus, subscribeJobs,
-  loadAliases, saveAlias, normProv } from './supabase.js'
+  loadAliases, saveAlias, normProv, archiveJob } from './supabase.js'
 
 /* ---------- helpers de datos ---------- */
 const rotOf = (it, m) => (((m[it.id]?.rot ?? it.rot0) % 360) + 360) % 360
@@ -62,6 +62,8 @@ const I = {
   grid: <><rect x="3" y="3" width="7" height="7" rx="1" /><rect x="14" y="3" width="7" height="7" rx="1" /><rect x="3" y="14" width="7" height="7" rx="1" /><rect x="14" y="14" width="7" height="7" rx="1" /></>,
   doc: <><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" /><path d="M14 2v6h6" /></>,
   chevR: <path d="m9 18 6-6-6-6" />,
+  archive: <><rect x="3" y="4" width="18" height="4" rx="1" /><path d="M5 8v11a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V8" /><path d="M10 12h4" /></>,
+  unarchive: <><rect x="3" y="4" width="18" height="4" rx="1" /><path d="M5 8v11a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V8" /><path d="M12 17v-6" /><path d="m9.5 13.5 2.5-2.5 2.5 2.5" /></>,
   edit: <><path d="M12 20h9" /><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z" /></>,
   chart: <><path d="M3 3v18h18" /><rect x="7" y="11" width="3" height="6" /><rect x="12" y="7" width="3" height="10" /><rect x="17" y="13" width="3" height="4" /></>,
   cloud: <path d="M17.5 19a4.5 4.5 0 0 0 .5-8.97A6 6 0 0 0 6.34 9 4 4 0 0 0 7 17h10.5z" />,
@@ -222,6 +224,8 @@ export default function App() {
   const [itemsLoading, setItemsLoading] = useState(false)
   const [aliases, setAliases] = useState({})          // memoria de correcciones de proveedor
   const [dupSet, setDupSet] = useState(() => new Set()) // facturas posibles duplicadas
+  const [archLocal, setArchLocal] = useState(() => lsGet('agm_archived', [])) // ids archivados (fallback local)
+  const [lotesFilter, setLotesFilter] = useState(() => lsGet('agm_lotes_filter', 'todos')) // 'todos' | 'pend'
   const cacheKeyRef = useRef('')
   const saveTimers = useRef({})
 
@@ -295,6 +299,17 @@ export default function App() {
     refresh()
   }
 
+  /* archivar / desarchivar un lote (servidor + fallback local para que funcione ya) */
+  const isArchived = job => Boolean(job.archivado) || archLocal.includes(job.id)
+  const toggleArchive = async job => {
+    const next = !isArchived(job)
+    const set = new Set(archLocal); next ? set.add(job.id) : set.delete(job.id)
+    const arr = [...set]; setArchLocal(arr); lsSet('agm_archived', arr)
+    if (syncEnabled) { try { await archiveJob(job.id, next) } catch (e) {} }
+    setJobs(js => js.map(j => j.id === job.id ? { ...j, archivado: next } : j))
+  }
+  const setLotesFilterP = f => { setLotesFilter(f); lsSet('agm_lotes_filter', f) }
+
   /* export (usa la tanda cargada) */
   const approvedRows = (onlyVer) => [...items].filter(it => !onlyVer || marks[it.id]?.status === 'ver').sort((a, b) => isoFromDMY(F(a, marks, 'fecha')) < isoFromDMY(F(b, marks, 'fecha')) ? -1 : 1).map(it => {
     const s = marks[it.id]; const st = s?.status === 'ver' ? 'Verificada' : s?.status === 'rev' ? 'A revisar' : 'Pendiente'
@@ -311,7 +326,8 @@ export default function App() {
       <UpdateBanner />
       {view === 'dashboard' &&
         <Dashboard jobs={jobs} stats={stats} heartbeat={heartbeat} sync={sync} session={session} userName={userName} loaded={loaded}
-          theme={theme} onToggleTheme={toggleTheme}
+          theme={theme} onToggleTheme={toggleTheme} isArchived={isArchived} onArchive={toggleArchive}
+          lotesFilter={lotesFilter} onLotesFilter={setLotesFilterP}
           onOpen={openJob} onDelete={setConfirm} onStats={() => setView('stats')} onUpload={() => setUpload(true)} />}
       {view === 'stats' &&
         <StatsView onBack={() => setView('dashboard')} />}
@@ -364,8 +380,16 @@ function StatusBar({ heartbeat }) {
   )
 }
 
-function Dashboard({ jobs, stats, heartbeat, sync, session, userName, loaded, theme, onToggleTheme, onOpen, onDelete, onStats, onUpload }) {
-  const g = Object.values(stats).reduce((a, s) => ({ n: a.n + s.n, ver: a.ver + s.ver, rev: a.rev + s.rev }), { n: 0, ver: 0, rev: 0 })
+function Dashboard({ jobs, stats, heartbeat, sync, session, userName, loaded, theme, onToggleTheme, isArchived, onArchive, lotesFilter, onLotesFilter, onOpen, onDelete, onStats, onUpload }) {
+  const [showArch, setShowArch] = useState(false)
+  const activos = jobs.filter(j => !isArchived(j))
+  const archivados = jobs.filter(j => isArchived(j))
+  const viewingArch = showArch && archivados.length > 0   // sin archivados, siempre volvemos a activos
+  // ¿tiene el lote facturas sin verificar? (pendientes o a revisar)
+  const jobPend = j => { const s = stats[j.id]; if (!s || !s.n) return true; return (s.ver || 0) < s.n }
+  const shown = (viewingArch ? archivados : activos).filter(j => lotesFilter !== 'pend' || jobPend(j))
+  // KPIs y progreso global: solo lotes activos (los archivados quedan fuera)
+  const g = activos.reduce((a, j) => { const s = stats[j.id] || { n: 0, ver: 0, rev: 0 }; return { n: a.n + s.n, ver: a.ver + s.ver, rev: a.rev + s.rev } }, { n: 0, ver: 0, rev: 0 })
   g.pend = Math.max(0, g.n - g.ver - g.rev)
   const pct = g.n ? Math.round((g.ver / g.n) * 100) : 0
   const hora = new Date().getHours()
@@ -377,7 +401,7 @@ function Dashboard({ jobs, stats, heartbeat, sync, session, userName, loaded, th
           <div className="grid place-items-center w-10 h-10 rounded-xl brand-grad text-white shadow-lg shadow-indigo-600/30"><Icon d={I.doc} /></div>
           <div className="min-w-0">
             <h1 className="text-xl font-bold tracking-tight text-slate-900 dark:text-slate-100 dark:text-slate-100">Revisión de facturas <span className="brand-text">AGM</span></h1>
-            <p className="text-[13px] text-slate-500 dark:text-slate-400">{jobs.length} {jobs.length === 1 ? 'lote' : 'lotes'}</p>
+            <p className="text-[13px] text-slate-500 dark:text-slate-400">{activos.length} {activos.length === 1 ? 'lote' : 'lotes'}{archivados.length ? ` · ${archivados.length} archivados` : ''}</p>
           </div>
           <div className="ml-auto self-start flex items-center gap-2">
             <button onClick={() => location.replace(location.pathname + '?r=' + Date.now())} title="Actualizar la app (recarga sin caché)"
@@ -432,11 +456,27 @@ function Dashboard({ jobs, stats, heartbeat, sync, session, userName, loaded, th
               <button onClick={onUpload} className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg brand-grad text-white text-sm font-semibold shadow shadow-indigo-600/30 hover:opacity-90 transition"><Icon d={I.upload} className="w-4 h-4" /> Subir facturas</button>
             </div>
           </div>
+
+          <div className="mb-3 flex items-center gap-2 flex-wrap">
+            <div className="inline-flex rounded-full bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 p-0.5">
+              {[['todos', 'Todos'], ['pend', 'Pendientes']].map(([id, label]) => (
+                <button key={id} onClick={() => onLotesFilter(id)}
+                  className={'px-3.5 py-1.5 rounded-full text-[13px] font-semibold transition ' + (lotesFilter === id ? 'bg-indigo-600 text-white shadow' : 'text-slate-600 dark:text-slate-300 hover:text-indigo-600')}>{label}</button>
+              ))}
+            </div>
+            {archivados.length > 0 &&
+              <button onClick={() => setShowArch(v => !v)}
+                className={'ml-auto flex items-center gap-1.5 px-3 py-1.5 rounded-full text-[13px] font-semibold border transition ' + (viewingArch ? 'bg-slate-700 text-white border-slate-700' : 'bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-300 border-slate-200 dark:border-slate-700 hover:border-indigo-300')}>
+                <Icon d={I.archive} className="w-4 h-4" /> {viewingArch ? 'Ver activos' : `Archivados (${archivados.length})`}</button>}
+          </div>
+
           {jobs.length === 0
             ? <div className="rounded-2xl border border-dashed border-slate-300 dark:border-slate-700 bg-white/60 dark:bg-slate-900/50 p-10 text-center text-slate-500 dark:text-slate-400">No hay lotes todavía. Pulsa <b>Subir facturas</b> para crear el primero.</div>
-            : <div className="grid sm:grid-cols-2 gap-3">
-                {jobs.map(j => <JobCard key={j.id} job={j} s={stats[j.id]} onOpen={() => onOpen(j)} onDelete={() => onDelete(j)} />)}
-              </div>}
+            : shown.length === 0
+              ? <div className="rounded-2xl border border-dashed border-slate-300 dark:border-slate-700 bg-white/60 dark:bg-slate-900/50 p-8 text-center text-slate-500 dark:text-slate-400">{viewingArch ? 'No hay lotes archivados.' : lotesFilter === 'pend' ? 'No hay lotes con facturas pendientes. 🎉' : 'No hay lotes que mostrar.'}</div>
+              : <div className="grid sm:grid-cols-2 gap-3">
+                  {shown.map(j => <JobCard key={j.id} job={j} s={stats[j.id]} archived={viewingArch} onOpen={() => onOpen(j)} onDelete={() => onDelete(j)} onArchive={() => onArchive(j)} />)}
+                </div>}
         </>
       )}
     </div>
@@ -459,7 +499,7 @@ const Kpi = ({ n, label, tone, icon }) => {
   )
 }
 
-function JobCard({ job, s, onOpen, onDelete }) {
+function JobCard({ job, s, onOpen, onDelete, onArchive, archived }) {
   const est = ESTADO[job.estado] || ESTADO.en_cola
   const subidas = job.n_facturas ?? 0
   const n = s?.n ?? subidas                      // extraídas
@@ -469,7 +509,7 @@ function JobCard({ job, s, onOpen, onDelete }) {
   const done = n > 0 && ver === n
   const faltan = job.estado === 'listo' && subidas > n ? subidas - n : 0
   return (
-    <div className="group rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm hover:shadow-md hover:border-indigo-300 transition overflow-hidden">
+    <div className={'group rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm hover:shadow-md hover:border-indigo-300 transition overflow-hidden' + (archived ? ' opacity-70' : '')}>
       <button onClick={onOpen} className="w-full text-left p-4">
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">
@@ -497,7 +537,9 @@ function JobCard({ job, s, onOpen, onDelete }) {
       <div className="flex border-t border-slate-100 dark:border-slate-800">
         <button onClick={onOpen} className="flex-1 py-2.5 text-sm font-semibold text-indigo-600 dark:text-indigo-400 hover:bg-indigo-50 dark:hover:bg-indigo-500/10 transition">Abrir</button>
         <div className="w-px bg-slate-100 dark:bg-slate-800" />
-        <button onClick={onDelete} className="px-4 py-2.5 text-sm font-semibold text-rose-500 hover:bg-rose-50 transition flex items-center gap-1.5"><Icon d={I.trash} className="w-4 h-4" /> Eliminar</button>
+        <button onClick={onArchive} title={archived ? 'Desarchivar' : 'Archivar'} className="px-4 py-2.5 text-sm font-semibold text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 transition flex items-center gap-1.5"><Icon d={archived ? I.unarchive : I.archive} className="w-4 h-4" /> <span className="hidden sm:inline">{archived ? 'Desarchivar' : 'Archivar'}</span></button>
+        <div className="w-px bg-slate-100 dark:bg-slate-800" />
+        <button onClick={onDelete} title="Eliminar" className="px-4 py-2.5 text-sm font-semibold text-rose-500 hover:bg-rose-50 transition flex items-center gap-1.5"><Icon d={I.trash} className="w-4 h-4" /> <span className="hidden sm:inline">Eliminar</span></button>
       </div>
     </div>
   )

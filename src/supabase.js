@@ -133,6 +133,14 @@ export async function setJobEstado(id, estado) {
   return !error
 }
 
+// Archivar / desarchivar un lote (columna jobs.archivado; ver supabase/archivar-lotes.sql).
+// Devuelve true si el servidor lo aceptó; false si falló (p.ej. la columna aún no existe).
+export async function archiveJob(id, archivado) {
+  if (!sb) return false
+  const { error } = await sb.from('jobs').update({ archivado }).eq('id', id)
+  return !error
+}
+
 // Facturas de un job (con imagen firmada), mismo shape que loadFacturas.
 export async function loadFacturasByJob(jobId) {
   if (!sb) return null
