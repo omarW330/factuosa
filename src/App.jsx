@@ -818,9 +818,13 @@ function ListView({ sel, items, marks, setField, mark, reset, rotate, sync, user
             <FilterBtn id="flag" label="A revisar" n={rev} />
             {atnCount > 0 && <button onClick={() => setFilter('aten')} title="Facturas que requieren atención" className={'flex items-center gap-1 px-3 py-1.5 rounded-full text-[13px] font-semibold whitespace-nowrap transition ' + (filter === 'aten' ? 'bg-amber-500 text-white shadow' : 'bg-amber-50 dark:bg-amber-500/15 text-amber-700 dark:text-amber-400 border border-amber-200 dark:border-amber-500/30')}><Icon d={I.alert} className="w-3.5 h-3.5" /> Atención {atnCount}</button>}
             {autoOk.length > 0 && <button onClick={quickVerify} title="Verifica las que cuadran y son de confianza alta" className="flex items-center gap-1 px-3 py-1.5 rounded-full text-[13px] font-semibold whitespace-nowrap bg-emerald-600 text-white hover:bg-emerald-700 transition"><Icon d={I.check} className="w-3.5 h-3.5" /> {autoOk.length} OK</button>}
-            <div className="relative ml-auto flex-1 min-w-[140px] max-w-[260px]">
+            <div className="relative ml-auto flex-1 min-w-[160px] max-w-[280px]">
               <Icon d={I.search} className="w-4 h-4 absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
-              <input value={q} onChange={e => setQ(e.target.value)} placeholder="Buscar…" className="w-full pl-8 pr-2 py-1.5 rounded-full border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 text-[13px] focus:border-indigo-500 focus:ring-2 focus:ring-indigo-200 outline-none" />
+              <input value={q} onChange={e => setQ(e.target.value)} placeholder="Buscar proveedor, nº, obs…" className="w-full pl-8 pr-14 py-1.5 rounded-full border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 text-[13px] focus:border-indigo-500 focus:ring-2 focus:ring-indigo-200 outline-none" />
+              {q && <div className="absolute right-2 top-1/2 -translate-y-1/2 flex items-center gap-1.5">
+                <span className={'text-[11px] font-bold tabular-nums ' + (visible.length ? 'text-indigo-600 dark:text-indigo-400' : 'text-rose-500')}>{visible.length}</span>
+                <button onClick={() => setQ('')} title="Limpiar" className="grid place-items-center w-5 h-5 rounded-full bg-slate-200 dark:bg-slate-700 text-slate-600 dark:text-slate-300 hover:bg-slate-300 dark:hover:bg-slate-600"><Icon d={I.x} className="w-3 h-3" /></button>
+              </div>}
             </div>
           </div>
         </div>
@@ -831,7 +835,7 @@ function ListView({ sel, items, marks, setField, mark, reset, rotate, sync, user
         {itemsLoading && items.length === 0 && [0, 1, 2].map(i => <Skel key={i} className="h-56 sm:h-64" />)}
         {!itemsLoading && items.length === 0 && <p className="text-slate-400 py-10 text-center">{sel?.estado === 'listo' ? 'Este lote no tiene facturas.' : 'El lote aún se está procesando…'}</p>}
         {items.length > 0 && visible.length === 0 && <p className="text-slate-400 py-10 text-center">Sin resultados para este filtro.</p>}
-        {visible.map(it => <InvoiceCard key={it.id} it={it} marks={marks} setField={setField} aliases={aliases} onAlias={onAlias} dup={dupSet && dupSet.has(it.id)} mark={mark} reset={reset} rotate={rotate} onZoom={() => setModalId(it.id)} />)}
+        {visible.map(it => <InvoiceCard key={it.id} it={it} marks={marks} setField={setField} aliases={aliases} onAlias={onAlias} dup={dupSet && dupSet.has(it.id)} mark={mark} reset={reset} rotate={rotate} q={ql} onZoom={() => setModalId(it.id)} />)}
       </div>
 
       {/* botón flotante de revisión en móvil */}
@@ -844,9 +848,24 @@ function ListView({ sel, items, marks, setField, mark, reset, rotate, sync, user
   )
 }
 
-function InvoiceCard({ it, marks, setField, aliases, onAlias, dup, mark, reset, rotate, onZoom }) {
+function Highlight({ text, q }) {
+  const s = String(text ?? '')
+  if (!q) return s
+  const ql = q.toLowerCase(), sl = s.toLowerCase()
+  const out = []; let from = 0, idx
+  while ((idx = sl.indexOf(ql, from)) >= 0) {
+    if (idx > from) out.push(s.slice(from, idx))
+    out.push(<mark key={idx} className="bg-amber-200 dark:bg-amber-400/40 text-inherit rounded px-0.5">{s.slice(idx, idx + q.length)}</mark>)
+    from = idx + q.length
+  }
+  out.push(s.slice(from))
+  return out
+}
+
+function InvoiceCard({ it, marks, setField, aliases, onAlias, dup, mark, reset, rotate, q, onZoom }) {
   const s = marks[it.id] || {}
   const done = s.status === 'ver'
+  const hint = q && [['Nº', F(it, marks, 'num')], ['Obs', F(it, marks, 'obs')]].find(([, v]) => String(v || '').toLowerCase().includes(q))
   return (
     <div className={'rounded-2xl bg-white dark:bg-slate-900 border shadow-sm overflow-hidden grid sm:grid-cols-[300px_1fr] transition ' + (done ? 'opacity-60 border-slate-200 dark:border-slate-800' : it.flag || s.status === 'rev' ? 'border-amber-300 dark:border-amber-500/50' : 'border-slate-200 dark:border-slate-800')}>
       <div className="relative bg-slate-900 h-56 sm:h-auto sm:min-h-[260px] flex items-center justify-center overflow-hidden cursor-zoom-in" onClick={onZoom}>
@@ -857,7 +876,8 @@ function InvoiceCard({ it, marks, setField, aliases, onAlias, dup, mark, reset, 
         </div>
       </div>
       <div className="p-4">
-        <div className="text-base font-bold text-slate-900 dark:text-slate-100 mb-0.5">{F(it, marks, 'proveedor') || '—'}</div>
+        <div className="text-base font-bold text-slate-900 dark:text-slate-100 mb-0.5"><Highlight text={F(it, marks, 'proveedor') || '—'} q={q} /></div>
+        {hint && <div className="text-[11px] text-slate-500 dark:text-slate-400 truncate mb-0.5">{hint[0]}: <Highlight text={hint[1]} q={q} /></div>}
         <Fields it={it} marks={marks} setField={setField} aliases={aliases} onAlias={onAlias} dup={dup} />
         <div className="flex flex-wrap gap-2 mt-3">
           <button onClick={() => mark(it.id, 'ver')} className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-emerald-600 text-white text-sm font-semibold hover:bg-emerald-700 transition"><Icon d={I.check} className="w-4 h-4" /> Verificado</button>
