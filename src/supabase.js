@@ -154,7 +154,7 @@ export async function loadFacturasByJob(jobId) {
   }
   return data.map(r => ({
     id: r.id, item_id: r.item_id, img: urls[r.img_path] || '', rot0: r.rot0 ?? 0,
-    fecha: r.fecha, proveedor: r.proveedor, num: r.num,
+    fecha: r.fecha, proveedor: r.proveedor ? String(r.proveedor).toUpperCase() : r.proveedor, num: r.num,
     base: r.base, iva: r.iva, total: r.total, timp: r.timp,
     conf: r.conf, flag: r.flag, obs: r.obs,
     codigo: r.codigo, iva_pct: r.iva_pct,

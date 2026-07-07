@@ -287,7 +287,7 @@ export default function App() {
     }
     return m
   }), [])
-  const setField = (id, k, raw, num) => { update(id, { [k]: k === 'fecha' ? dmyFromIso(raw) : raw }) }   // guarda en crudo; Nv() parsea al leer
+  const setField = (id, k, raw, num) => { update(id, { [k]: k === 'fecha' ? dmyFromIso(raw) : k === 'proveedor' ? String(raw).toUpperCase() : raw }) }   // nombres siempre en mayúsculas; guarda en crudo
   const mark = (id, status) => update(id, { status })
   const rotate = id => { const it = items.find(x => x.id === id); update(id, { rot: (rotOf(it, marks) + 90) % 360 }) }
   const reset = id => update(id, { status: undefined, base: undefined, iva: undefined, total: undefined, fecha: undefined, proveedor: undefined, num: undefined, obs: undefined, codigo: undefined, iva_pct: undefined })
@@ -315,7 +315,7 @@ export default function App() {
   /* export (usa la tanda cargada) */
   const approvedRows = (onlyVer) => [...items].filter(it => !onlyVer || marks[it.id]?.status === 'ver').sort((a, b) => isoFromDMY(F(a, marks, 'fecha')) < isoFromDMY(F(b, marks, 'fecha')) ? -1 : 1).map(it => {
     const s = marks[it.id]; const st = s?.status === 'ver' ? 'Verificada' : s?.status === 'rev' ? 'A revisar' : 'Pendiente'
-    return { fecha: F(it, marks, 'fecha'), proveedor: F(it, marks, 'proveedor'), num: F(it, marks, 'num'), codigo: F(it, marks, 'codigo'), iva_pct: F(it, marks, 'iva_pct'), base: Nv(it, marks, 'base'), iva: Nv(it, marks, 'iva'), total: Nv(it, marks, 'total'), estado: st, obs: F(it, marks, 'obs'), amber: s?.status === 'rev' || it.flag }
+    return { fecha: F(it, marks, 'fecha'), proveedor: String(F(it, marks, 'proveedor') || '').toUpperCase(), num: F(it, marks, 'num'), codigo: F(it, marks, 'codigo'), iva_pct: F(it, marks, 'iva_pct'), base: Nv(it, marks, 'base'), iva: Nv(it, marks, 'iva'), total: Nv(it, marks, 'total'), estado: st, obs: F(it, marks, 'obs'), amber: s?.status === 'rev' || it.flag }
   })
   const xlsxOpts = () => ({ tipo: sel?.tipo, empresa: sel?.empresa })
   const exportXlsx = (onlyVer) => { const blob = buildXlsx(approvedRows(onlyVer === true), xlsxOpts()); const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = (sel?.empresa || 'AGM') + '_' + (sel?.tipo === 'clientes' ? 'clientes' : 'proveedores') + (onlyVer === true ? '_verificadas' : '_revisado') + '.xlsx'; a.click(); URL.revokeObjectURL(a.href) }
@@ -791,7 +791,7 @@ function Fields({ it, marks, setField, aliases, onAlias, dup, compact }) {
       </div>
       <Row label="Fecha"><input type="date" className={INP + ' w-[150px]'} value={isoFromDMY(F(it, marks, 'fecha'))} onChange={e => setField(it.id, 'fecha', e.target.value, false)} /></Row>
       {cli && <Row label="Código"><input className={INP + ' w-40'} value={F(it, marks, 'codigo') || ''} onChange={e => setField(it.id, 'codigo', e.target.value, false)} placeholder="43000000" /></Row>}
-      <Row label={cli ? 'Cliente' : 'Proveedor'}><input className={INP + ' flex-1 min-w-0'} value={provVal} onChange={e => setField(it.id, 'proveedor', e.target.value, false)} onBlur={saveProvAlias} /></Row>
+      <Row label={cli ? 'Cliente' : 'Proveedor'}><input className={INP + ' flex-1 min-w-0 uppercase'} value={provVal} onChange={e => setField(it.id, 'proveedor', e.target.value, false)} onBlur={saveProvAlias} /></Row>
       {showSug && (
         <div className="flex items-center gap-2 -mt-0.5 mb-1 pl-1">
           <span className="text-[12px] text-indigo-600 dark:text-indigo-400 flex items-center gap-1 min-w-0"><Icon d={I.spark} className="w-3.5 h-3.5 shrink-0" /> <span className="truncate">Sugerencia: «{sug}»</span></span>
@@ -971,7 +971,7 @@ function InvoiceCard({ it, marks, setField, aliases, onAlias, dup, mark, reset, 
         </div>
       </div>
       <div className="p-4">
-        <div className="text-base font-bold text-slate-900 dark:text-slate-100 mb-0.5"><Highlight text={F(it, marks, 'proveedor') || '—'} q={q} /></div>
+        <div className="text-base font-bold text-slate-900 dark:text-slate-100 mb-0.5"><Highlight text={String(F(it, marks, 'proveedor') || '').toUpperCase() || '—'} q={q} /></div>
         {hint && <div className="text-[11px] text-slate-500 dark:text-slate-400 truncate mb-0.5">{hint[0]}: <Highlight text={hint[1]} q={q} /></div>}
         <Fields it={it} marks={marks} setField={setField} aliases={aliases} onAlias={onAlias} dup={dup} />
         <div className="flex flex-wrap gap-2 mt-3">
