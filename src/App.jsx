@@ -763,6 +763,9 @@ function Fields({ it, marks, setField, aliases, onAlias, dup, compact }) {
   const sug = aliases ? aliases[normProv(it.proveedor)] : null
   const showSug = sug && sug !== provVal && provVal === (it.proveedor || '')   // original sin tocar y hay corrección aprendida
   const cli = it._cli
+  // Código de cliente: todos son 430000 + 2 dígitos. Prefijo fijo, solo se teclea el final.
+  const codVal = String(F(it, marks, 'codigo') || '')
+  const codSuf = codVal.startsWith('430000') ? codVal.slice(6) : codVal
   const saveProvAlias = () => { const v = F(it, marks, 'proveedor'); if (onAlias && v && v !== it.proveedor) onAlias(it.proveedor, v) }
   const cuadrar = () => {
     const base = Nv(it, marks, 'base'), iva = Nv(it, marks, 'iva')
@@ -790,7 +793,12 @@ function Fields({ it, marks, setField, aliases, onAlias, dup, compact }) {
         {s.status === 'rev' && <span className="px-2 py-0.5 rounded-md text-[11px] font-bold bg-amber-500 text-white">⚑ A REVISAR</span>}
       </div>
       <Row label="Fecha"><input type="date" className={INP + ' w-[150px]'} value={isoFromDMY(F(it, marks, 'fecha'))} onChange={e => setField(it.id, 'fecha', e.target.value, false)} /></Row>
-      {cli && <Row label="Código"><input className={INP + ' w-40'} value={F(it, marks, 'codigo') || ''} onChange={e => setField(it.id, 'codigo', e.target.value, false)} placeholder="43000000" /></Row>}
+      {cli && <Row label="Código">
+        <div className="flex items-stretch">
+          <span className="inline-flex items-center px-2.5 rounded-l-lg border border-r-0 border-slate-300 dark:border-slate-700 bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400 text-sm tabular-nums select-none">430000</span>
+          <input inputMode="numeric" maxLength={4} placeholder="00" title="Código de cliente: prefijo 430000 fijo, teclea solo los últimos dígitos" className={INP + ' w-20 rounded-l-none tabular-nums'} value={codSuf} onChange={e => { const d = e.target.value.replace(/\D/g, ''); setField(it.id, 'codigo', d ? '430000' + d : '', false) }} />
+        </div>
+      </Row>}
       <Row label={cli ? 'Cliente' : 'Proveedor'}><input className={INP + ' flex-1 min-w-0 uppercase'} value={provVal} onChange={e => setField(it.id, 'proveedor', e.target.value, false)} onBlur={saveProvAlias} /></Row>
       {showSug && (
         <div className="flex items-center gap-2 -mt-0.5 mb-1 pl-1">
