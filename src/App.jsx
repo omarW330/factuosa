@@ -263,7 +263,8 @@ export default function App() {
     cacheKeyRef.current = 'agm_revj_' + job.id
     setMarks(lsGet(cacheKeyRef.current, {}))   // cache local primero (instantáneo)
     window.scrollTo(0, 0)
-    const its = (await loadFacturasByJob(job.id)) || []
+    const cli = job.tipo === 'clientes'
+    const its = ((await loadFacturasByJob(job.id)) || []).map(x => ({ ...x, _cli: cli }))
     setItems(its); setItemsLoading(false)
     const rev = await loadRevisiones(its.map(x => x.id))
     const m = {}
@@ -289,7 +290,7 @@ export default function App() {
   const setField = (id, k, raw, num) => { update(id, { [k]: k === 'fecha' ? dmyFromIso(raw) : raw }) }   // guarda en crudo; Nv() parsea al leer
   const mark = (id, status) => update(id, { status })
   const rotate = id => { const it = items.find(x => x.id === id); update(id, { rot: (rotOf(it, marks) + 90) % 360 }) }
-  const reset = id => update(id, { status: undefined, base: undefined, iva: undefined, total: undefined, fecha: undefined, proveedor: undefined, num: undefined, obs: undefined })
+  const reset = id => update(id, { status: undefined, base: undefined, iva: undefined, total: undefined, fecha: undefined, proveedor: undefined, num: undefined, obs: undefined, codigo: undefined, iva_pct: undefined })
 
   /* borrar un job (facturas + imágenes + revisiones) */
   const removeJob = async job => {
@@ -314,10 +315,11 @@ export default function App() {
   /* export (usa la tanda cargada) */
   const approvedRows = (onlyVer) => [...items].filter(it => !onlyVer || marks[it.id]?.status === 'ver').sort((a, b) => isoFromDMY(F(a, marks, 'fecha')) < isoFromDMY(F(b, marks, 'fecha')) ? -1 : 1).map(it => {
     const s = marks[it.id]; const st = s?.status === 'ver' ? 'Verificada' : s?.status === 'rev' ? 'A revisar' : 'Pendiente'
-    return { fecha: F(it, marks, 'fecha'), proveedor: F(it, marks, 'proveedor'), num: F(it, marks, 'num'), base: Nv(it, marks, 'base'), iva: Nv(it, marks, 'iva'), total: Nv(it, marks, 'total'), estado: st, obs: F(it, marks, 'obs'), amber: s?.status === 'rev' || it.flag }
+    return { fecha: F(it, marks, 'fecha'), proveedor: F(it, marks, 'proveedor'), num: F(it, marks, 'num'), codigo: F(it, marks, 'codigo'), iva_pct: F(it, marks, 'iva_pct'), base: Nv(it, marks, 'base'), iva: Nv(it, marks, 'iva'), total: Nv(it, marks, 'total'), estado: st, obs: F(it, marks, 'obs'), amber: s?.status === 'rev' || it.flag }
   })
-  const exportXlsx = (onlyVer) => { const blob = buildXlsx(approvedRows(onlyVer === true)); const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = (sel?.empresa || 'AGM') + (onlyVer === true ? '_verificadas' : '_revisado') + '.xlsx'; a.click(); URL.revokeObjectURL(a.href) }
-  const copyTable = async () => { try { await navigator.clipboard.writeText(tsvTable(approvedRows())); alert(`${cheer(userName)} Tabla copiada, pégala en Excel.`) } catch (e) { alert('No se pudo copiar automáticamente.') } }
+  const xlsxOpts = () => ({ tipo: sel?.tipo, empresa: sel?.empresa })
+  const exportXlsx = (onlyVer) => { const blob = buildXlsx(approvedRows(onlyVer === true), xlsxOpts()); const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = (sel?.empresa || 'AGM') + '_' + (sel?.tipo === 'clientes' ? 'clientes' : 'proveedores') + (onlyVer === true ? '_verificadas' : '_revisado') + '.xlsx'; a.click(); URL.revokeObjectURL(a.href) }
+  const copyTable = async () => { try { await navigator.clipboard.writeText(tsvTable(approvedRows(), xlsxOpts())); alert(`${cheer(userName)} Tabla copiada, pégala en Excel.`) } catch (e) { alert('No se pudo copiar automáticamente.') } }
 
   if (syncEnabled && !authReady) return <div className="min-h-full grid place-items-center text-slate-400">Cargando…</div>
   if (syncEnabled && !session) return <><UpdateBanner /><Login theme={theme} onToggleTheme={toggleTheme} /></>
@@ -516,6 +518,7 @@ function JobCard({ job, s, onOpen, onDelete, onArchive, archived }) {
           <div className="min-w-0">
             <div className="flex items-center gap-2 flex-wrap">
               <span className="font-bold text-slate-900 dark:text-slate-100">{job.empresa || '—'}</span>
+              <span className={'px-1.5 py-0.5 rounded text-[10px] font-bold ' + (job.tipo === 'clientes' ? 'bg-sky-100 text-sky-700 dark:bg-sky-500/20 dark:text-sky-300' : 'bg-violet-100 text-violet-700 dark:bg-violet-500/20 dark:text-violet-300')}>{job.tipo === 'clientes' ? 'CLIENTES' : 'PROVEEDORES'}</span>
               <span className={'px-1.5 py-0.5 rounded text-[10px] font-bold ' + est.c}>{est.l.toUpperCase()}</span>
               {done && <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-emerald-100 text-emerald-700">COMPLETA</span>}
             </div>
@@ -549,6 +552,7 @@ function JobCard({ job, s, onOpen, onDelete, onArchive, archived }) {
 
 function UploadModal({ empresas, userName, onClose, onDone }) {
   const [emp, setEmp] = useState('')
+  const [tipo, setTipo] = useState('proveedores')
   const [files, setFiles] = useState([])
   const [busy, setBusy] = useState(false)
   const [prog, setProg] = useState([0, 0])
@@ -562,7 +566,7 @@ function UploadModal({ empresas, userName, onClose, onDone }) {
   const submit = async () => {
     if (!emp || !files.length) return
     setBusy(true)
-    const job = await createJob({ empresa: emp, n_facturas: files.length, estado: 'en_cola' })
+    const job = await createJob({ empresa: emp, n_facturas: files.length, estado: 'en_cola', tipo })
     if (!job) { setBusy(false); alert('No se pudo crear el lote.'); return }
     await uploadFiles(emp, job.id, files, (d, t) => setProg([d, t]))
     setBusy(false); setDone(true)
@@ -582,7 +586,16 @@ function UploadModal({ empresas, userName, onClose, onDone }) {
           <h2 className="text-lg font-bold text-slate-900 dark:text-slate-100 dark:text-slate-100">Subir conjunto de facturas</h2>
           <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">Se suben las imágenes/PDF y la IA las procesará en la próxima ejecución.</p>
 
-          <label className="block text-[13px] font-medium text-slate-600 dark:text-slate-300 dark:text-slate-300 mt-4 mb-1">Empresa</label>
+          <label className="block text-[13px] font-medium text-slate-600 dark:text-slate-300 mt-4 mb-1">Tipo</label>
+          <div className="grid grid-cols-2 gap-2">
+            {[['proveedores', 'Proveedores', I.doc], ['clientes', 'Clientes', I.user]].map(([id, label, icon]) => (
+              <button key={id} type="button" onClick={() => setTipo(id)}
+                className={'flex items-center justify-center gap-1.5 py-2.5 rounded-xl border text-sm font-semibold transition ' + (tipo === id ? 'border-indigo-500 bg-indigo-50 dark:bg-indigo-500/15 text-indigo-700 dark:text-indigo-300' : 'border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:border-indigo-300')}>
+                <Icon d={icon} className="w-4 h-4" /> {label}</button>
+            ))}
+          </div>
+
+          <label className="block text-[13px] font-medium text-slate-600 dark:text-slate-300 mt-4 mb-1">Empresa</label>
           <select value={emp} onChange={e => setEmp(e.target.value)} className="w-full rounded-xl border border-slate-300 dark:border-slate-700 px-3 py-2.5 bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 dark:text-slate-100 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-200 outline-none">
             {empresas.length === 0 && <option value="">(sin empresas)</option>}
             {empresas.map(e => <option key={e.id} value={e.id}>{e.nombre || e.id}</option>)}
@@ -749,12 +762,14 @@ function Fields({ it, marks, setField, aliases, onAlias, dup, compact }) {
   const provVal = F(it, marks, 'proveedor') || ''
   const sug = aliases ? aliases[normProv(it.proveedor)] : null
   const showSug = sug && sug !== provVal && provVal === (it.proveedor || '')   // original sin tocar y hay corrección aprendida
+  const cli = it._cli
   const saveProvAlias = () => { const v = F(it, marks, 'proveedor'); if (onAlias && v && v !== it.proveedor) onAlias(it.proveedor, v) }
   const cuadrar = () => {
     const base = Nv(it, marks, 'base'), iva = Nv(it, marks, 'iva')
-    const m = String(it.timp || '').match(/(\d+(?:[.,]\d+)?)\s*%/)
-    if (m && base > 0) {           // hay % → recalcula IVA desde la base y total = base+IVA
-      const pct = parseFloat(m[1].replace(',', '.'))
+    // % de IVA: en clientes va explícito (iva_pct); en proveedores se saca del texto 'timp'
+    const pctRaw = cli ? F(it, marks, 'iva_pct') : (String(it.timp || '').match(/(\d+(?:[.,]\d+)?)\s*%/) || [])[1]
+    const pct = pctRaw == null || pctRaw === '' ? null : parseFloat(String(pctRaw).replace(',', '.'))
+    if (pct != null && base > 0) { // hay % → recalcula IVA desde la base y total = base+IVA
       const niva = Math.round(base * pct) / 100
       setField(it.id, 'iva', niva.toFixed(2), true)
       setField(it.id, 'total', (base + niva).toFixed(2), true)
@@ -775,7 +790,8 @@ function Fields({ it, marks, setField, aliases, onAlias, dup, compact }) {
         {s.status === 'rev' && <span className="px-2 py-0.5 rounded-md text-[11px] font-bold bg-amber-500 text-white">⚑ A REVISAR</span>}
       </div>
       <Row label="Fecha"><input type="date" className={INP + ' w-[150px]'} value={isoFromDMY(F(it, marks, 'fecha'))} onChange={e => setField(it.id, 'fecha', e.target.value, false)} /></Row>
-      <Row label="Proveedor"><input className={INP + ' flex-1 min-w-0'} value={provVal} onChange={e => setField(it.id, 'proveedor', e.target.value, false)} onBlur={saveProvAlias} /></Row>
+      {cli && <Row label="Código"><input className={INP + ' w-40'} value={F(it, marks, 'codigo') || ''} onChange={e => setField(it.id, 'codigo', e.target.value, false)} placeholder="43000000" /></Row>}
+      <Row label={cli ? 'Cliente' : 'Proveedor'}><input className={INP + ' flex-1 min-w-0'} value={provVal} onChange={e => setField(it.id, 'proveedor', e.target.value, false)} onBlur={saveProvAlias} /></Row>
       {showSug && (
         <div className="flex items-center gap-2 -mt-0.5 mb-1 pl-1">
           <span className="text-[12px] text-indigo-600 dark:text-indigo-400 flex items-center gap-1 min-w-0"><Icon d={I.spark} className="w-3.5 h-3.5 shrink-0" /> <span className="truncate">Sugerencia: «{sug}»</span></span>
@@ -784,10 +800,11 @@ function Fields({ it, marks, setField, aliases, onAlias, dup, compact }) {
       )}
       <Row label="Nº factura"><input className={INP + ' flex-1 min-w-0'} value={F(it, marks, 'num') || ''} onChange={e => setField(it.id, 'num', e.target.value, false)} /></Row>
       <Row label="Base"><input inputMode="decimal" className={INP + ' w-28 text-right tabular-nums'} value={nv('base')} onChange={e => setField(it.id, 'base', e.target.value, true)} /></Row>
-      <Row label={'IVA/IPSI · ' + (it.timp || '')}><input inputMode="decimal" className={INP + ' w-28 text-right tabular-nums'} value={nv('iva')} onChange={e => setField(it.id, 'iva', e.target.value, true)} /></Row>
+      {cli && <Row label="% IVA"><input inputMode="decimal" className={INP + ' w-20 text-right tabular-nums'} value={nv('iva_pct')} onChange={e => setField(it.id, 'iva_pct', e.target.value, true)} placeholder="21" /></Row>}
+      <Row label={cli ? 'IVA' : 'IVA/IPSI · ' + (it.timp || '')}><input inputMode="decimal" className={INP + ' w-28 text-right tabular-nums'} value={nv('iva')} onChange={e => setField(it.id, 'iva', e.target.value, true)} /></Row>
       <Row label="Total"><input inputMode="decimal" className={INP + ' w-28 text-right tabular-nums font-semibold'} value={nv('total')} onChange={e => setField(it.id, 'total', e.target.value, true)} /></Row>
       <div className="pt-2">
-        <span className="text-[13px] text-slate-500 dark:text-slate-400">Observaciones</span>
+        <span className="text-[13px] text-slate-500 dark:text-slate-400">{cli ? 'Comentarios' : 'Observaciones'}</span>
         <textarea className={INP + ' w-full mt-1 min-h-[44px] resize-y'} value={F(it, marks, 'obs') || ''} onChange={e => setField(it.id, 'obs', e.target.value, false)} />
       </div>
     </div>
@@ -853,7 +870,7 @@ function ListView({ sel, items, marks, setField, mark, reset, rotate, sync, user
           <div className="flex items-center gap-3 py-3">
             <button onClick={onBack} className="grid place-items-center w-9 h-9 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-600 dark:text-slate-300 transition"><Icon d={I.back} /></button>
             <div className="min-w-0">
-              <h1 className="font-bold text-slate-900 dark:text-slate-100 leading-tight truncate">{sel?.empresa || 'Lote'} · {relDay(sel?.creado)}</h1>
+              <h1 className="font-bold text-slate-900 dark:text-slate-100 leading-tight truncate">{sel?.empresa || 'Lote'} {sel?.tipo === 'clientes' && <span className="align-middle px-1.5 py-0.5 rounded text-[10px] font-bold bg-sky-100 text-sky-700 dark:bg-sky-500/20 dark:text-sky-300">CLIENTES</span>} · {relDay(sel?.creado)}</h1>
               <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
                 <p className="text-[12px] text-slate-500 dark:text-slate-400">{ver} verif · {rev} a revisar · {items.length - ver - rev} pend · Total <b className="text-slate-700 dark:text-slate-200">{eur(totalLote)}</b></p>
                 <SyncBadge sync={sync} />

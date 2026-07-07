@@ -293,12 +293,19 @@ def process_web_file(tok, e, move_after):
                     sb_storage_upload("facturas", img_path, jpeg, "image/jpeg"); okimg += 1
                 except Exception as ex:
                     print(f"    ✗ img {iid}: subida ({ex})"); img_path = None
-            rows.append({
+            row = {
                 "job_id": jid, "tanda": jid, "empresa": emp, "item_id": iid, "img_path": img_path,
                 "rot0": int(tonum(it.get("rot0")) or 0), "fecha": it.get("fecha"), "proveedor": it.get("proveedor"),
                 "num": it.get("num"), "base": tonum(it.get("base")), "iva": tonum(it.get("iva")), "total": tonum(it.get("total")),
                 "timp": it.get("timp"), "conf": it.get("conf"), "flag": bool(it.get("flag")), "obs": it.get("obs"),
-            })
+            }
+            # Campos de lotes de CLIENTES: solo se incluyen si vienen, para no romper
+            # los lotes de proveedores si aún no se han creado las columnas.
+            if it.get("codigo") is not None:
+                row["codigo"] = it.get("codigo")
+            if it.get("iva_pct") is not None:
+                row["iva_pct"] = tonum(it.get("iva_pct"))
+            rows.append(row)
         if rows:
             # UPSERT por (tanda,item_id): conserva el id de la factura → 'revisiones' sobrevive al reprocesar
             sb_rest("POST", "facturas?on_conflict=tanda,item_id", rows, prefer="resolution=merge-duplicates")

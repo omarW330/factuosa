@@ -119,9 +119,9 @@ export async function saveAlias(originalRaw, corregido) {
   return !error
 }
 
-export async function createJob({ empresa, n_facturas = 0, estado = 'en_cola' }) {
+export async function createJob({ empresa, n_facturas = 0, estado = 'en_cola', tipo = 'proveedores' }) {
   if (!sb) return null
-  const { data, error } = await sb.from('jobs').insert({ empresa, n_facturas, estado }).select().single()
+  const { data, error } = await sb.from('jobs').insert({ empresa, n_facturas, estado, tipo }).select().single()
   return error ? null : data
 }
 
@@ -157,6 +157,7 @@ export async function loadFacturasByJob(jobId) {
     fecha: r.fecha, proveedor: r.proveedor, num: r.num,
     base: r.base, iva: r.iva, total: r.total, timp: r.timp,
     conf: r.conf, flag: r.flag, obs: r.obs,
+    codigo: r.codigo, iva_pct: r.iva_pct,
   }))
 }
 
