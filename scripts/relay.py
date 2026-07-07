@@ -189,10 +189,11 @@ def sb_storage_upload(bucket, path, content, content_type):
 
 # ---------------- Relay ↑ (uploads → Dropbox) ----------------
 def relay_up(tok):
-    jobs = sb_rest("GET", "jobs?estado=eq.en_cola&select=id,empresa") or []
+    jobs = sb_rest("GET", "jobs?estado=eq.en_cola&select=id,empresa,tipo") or []
     print(f"[↑] {len(jobs)} job(s) en_cola")
     for job in jobs:
         jid, emp = job["id"], job.get("empresa") or "SIN_EMPRESA"
+        tipo = job.get("tipo") or "proveedores"
         prefix = f"{emp}/{jid}"
         try:
             files = sb_storage_list("uploads", prefix)
@@ -201,6 +202,13 @@ def relay_up(tok):
         names = [f["name"] for f in files if f.get("name") and not f["name"].startswith(".")]
         if not names:
             print(f"  · {jid}: sin ficheros en uploads, lo dejo en_cola"); continue
+        # Marca de tipo para Cowork: el tipo vive en Supabase; Cowork trabaja contra
+        # Dropbox, así que lo dejamos escrito en la carpeta del lote como _meta.json.
+        try:
+            meta = json.dumps({"job_id": jid, "empresa": emp, "tipo": tipo}, ensure_ascii=False).encode("utf-8")
+            dbx_upload(tok, f"{ENTRADA}/{emp}/{jid}/_meta.json", meta)
+        except Exception as e:
+            print(f"  ⚠ {jid}: no pude escribir _meta.json ({e})")
         ok = 0
         for name in names:
             try:
