@@ -331,6 +331,12 @@ def process_web_file(tok, e, move_after):
                     row["iva_pct"] = p
             rows.append(row)
         if rows:
+            # PostgREST exige que todas las filas del lote tengan las MISMAS claves
+            # (si unas llevan iva_pct/codigo y otras no → HTTP 400 PGRST102). Se unifican.
+            allkeys = set().union(*(r.keys() for r in rows))
+            for r in rows:
+                for k in allkeys:
+                    r.setdefault(k, None)
             # UPSERT por (tanda,item_id): conserva el id de la factura → 'revisiones' sobrevive al reprocesar
             sb_rest("POST", "facturas?on_conflict=tanda,item_id", rows, prefer="resolution=merge-duplicates")
             # borra solo las facturas que ya no están en el JSON (huérfanas), sin tocar las conservadas
