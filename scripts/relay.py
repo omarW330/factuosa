@@ -303,7 +303,8 @@ def process_web_file(tok, e, move_after):
                     print(f"    ✗ img {iid}: subida ({ex})"); img_path = None
             row = {
                 "job_id": jid, "tanda": jid, "empresa": emp, "item_id": iid, "img_path": img_path,
-                "rot0": int(tonum(it.get("rot0")) or 0), "fecha": it.get("fecha"), "proveedor": it.get("proveedor"),
+                # nombre = cliente en lotes de clientes (el JSON trae 'cliente'), o proveedor en el resto
+                "rot0": int(tonum(it.get("rot0")) or 0), "fecha": it.get("fecha"), "proveedor": it.get("cliente") or it.get("proveedor"),
                 "num": it.get("num"), "base": tonum(it.get("base")), "iva": tonum(it.get("iva")), "total": tonum(it.get("total")),
                 "timp": it.get("timp"), "conf": it.get("conf"), "flag": bool(it.get("flag")), "obs": it.get("obs"),
             }
