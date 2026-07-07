@@ -227,6 +227,20 @@ def _src_filename(it):
     mo = re.search(r"\[orig:\s*([^\]\r\n]+?)\s*\]", str(it.get("obs") or ""), re.I)
     return mo.group(1).strip() if mo else None
 
+def _auto_resumen(items):
+    """Resumen automático de reserva cuando Cowork no manda 'resumen' en el JSON."""
+    if not items:
+        return None
+    n = len(items)
+    marc = sum(1 for it in items if it.get("flag"))
+    baja = sum(1 for it in items if str(it.get("conf")).lower() == "baja")
+    total = sum(tonum(it.get("total")) or 0 for it in items)
+    partes = [f"{n} factura(s) extraída(s)"]
+    if marc: partes.append(f"{marc} marcada(s) para revisar")
+    if baja: partes.append(f"{baja} de confianza baja")
+    partes.append(f"total {total:.2f} €")
+    return "Resumen automático · " + " · ".join(partes)
+
 def process_web_file(tok, e, move_after):
     name = e["name"]
     jid = name[:-5]  # sin .json
@@ -294,6 +308,11 @@ def process_web_file(tok, e, move_after):
         else:
             sb_rest("DELETE", f"facturas?job_id=eq.{jid}")
         sb_rest("PATCH", f"jobs?id=eq.{jid}", {"estado": "listo", "terminado": "now()"})  # n_facturas se deja = subidas
+        # Resumen del lote: el que deja Cowork en el JSON, o uno automático de reserva.
+        resumen = (data.get("resumen") if isinstance(data, dict) else None) or _auto_resumen(items)
+        if resumen:
+            try: sb_rest("PATCH", f"jobs?id=eq.{jid}", {"resumen": str(resumen)[:4000]})
+            except Exception as ex: print(f"    · resumen no guardado ({ex}; ¿falta la columna jobs.resumen?)")
         if move_after:
             dbx_move(tok, e["path_lower"], f"{WEB}/procesados/{name}")
             try: dbx_rpc(tok, "files/delete_v2", {"path": f"{WEB}/img/{jid}"})  # limpia las imágenes ya volcadas

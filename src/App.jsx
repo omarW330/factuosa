@@ -62,6 +62,7 @@ const I = {
   grid: <><rect x="3" y="3" width="7" height="7" rx="1" /><rect x="14" y="3" width="7" height="7" rx="1" /><rect x="3" y="14" width="7" height="7" rx="1" /><rect x="14" y="14" width="7" height="7" rx="1" /></>,
   doc: <><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" /><path d="M14 2v6h6" /></>,
   chevR: <path d="m9 18 6-6-6-6" />,
+  note: <><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" /><path d="M14 2v6h6" /><path d="M8 13h8M8 17h5" /></>,
   archive: <><rect x="3" y="4" width="18" height="4" rx="1" /><path d="M5 8v11a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V8" /><path d="M10 12h4" /></>,
   unarchive: <><rect x="3" y="4" width="18" height="4" rx="1" /><path d="M5 8v11a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V8" /><path d="M12 17v-6" /><path d="m9.5 13.5 2.5-2.5 2.5 2.5" /></>,
   edit: <><path d="M12 20h9" /><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z" /></>,
@@ -533,6 +534,7 @@ function JobCard({ job, s, onOpen, onDelete, onArchive, archived }) {
               </div>
             </>
           : <div className="mt-3 text-[12px] text-slate-400">{job.estado === 'error' ? 'Error al procesar' : 'Esperando a la automática…'}</div>}
+        {job.resumen && <div className="mt-2.5 flex items-start gap-1.5 text-[12px] text-slate-500 dark:text-slate-400"><Icon d={I.note} className="w-3.5 h-3.5 mt-0.5 shrink-0 text-indigo-500" /> <span className="line-clamp-2">{job.resumen}</span></div>}
       </button>
       <div className="flex border-t border-slate-100 dark:border-slate-800">
         <button onClick={onOpen} className="flex-1 py-2.5 text-sm font-semibold text-indigo-600 dark:text-indigo-400 hover:bg-indigo-50 dark:hover:bg-indigo-500/10 transition">Abrir</button>
@@ -887,6 +889,8 @@ function ListView({ sel, items, marks, setField, mark, reset, rotate, sync, user
         </div>
       </div>
 
+      {sel?.resumen && <div className="mx-auto max-w-5xl px-4 pt-4"><ResumenLote text={sel.resumen} /></div>}
+
       {/* tarjetas */}
       <div className="mx-auto max-w-5xl px-4 py-5 space-y-4">
         {itemsLoading && items.length === 0 && [0, 1, 2].map(i => <Skel key={i} className="h-56 sm:h-64" />)}
@@ -901,6 +905,23 @@ function ListView({ sel, items, marks, setField, mark, reset, rotate, sync, user
       {modalId && <Modal it={items.find(x => x.id === modalId)} marks={marks} setField={setField} aliases={aliases} onAlias={onAlias} dup={dupSet && dupSet.has(modalId)} onClose={() => setModalId(null)} onRotate={rotate} mark={mark} />}
       {review && <ReviewMode items={ordered} marks={marks} setField={setField} aliases={aliases} onAlias={onAlias} dupSet={dupSet} setReview={setReview} mark={mark} rotate={rotate} exportXlsx={exportXlsx} userName={userName} />}
       {showDone && <DoneOverlay ver={ver} total={items.length} userName={userName} onExport={exportXlsx} onClose={() => setShowDone(false)} onBack={onBack} />}
+    </div>
+  )
+}
+
+function ResumenLote({ text }) {
+  const [open, setOpen] = useState(false)
+  const largo = String(text || '').length > 160
+  return (
+    <div className="rounded-xl border border-indigo-200 dark:border-indigo-500/30 bg-indigo-50/70 dark:bg-indigo-500/10 p-3">
+      <div className="flex items-start gap-2">
+        <Icon d={I.note} className="w-4 h-4 mt-0.5 shrink-0 text-indigo-600 dark:text-indigo-400" />
+        <div className="min-w-0 flex-1">
+          <div className="text-[11px] font-bold uppercase tracking-wide text-indigo-600 dark:text-indigo-400">Resumen del procesado</div>
+          <p className={'text-[13px] text-slate-700 dark:text-slate-200 whitespace-pre-wrap ' + (!open && largo ? 'line-clamp-3' : '')}>{text}</p>
+          {largo && <button onClick={() => setOpen(v => !v)} className="mt-1 text-[12px] font-semibold text-indigo-600 dark:text-indigo-400 hover:underline">{open ? 'Ver menos' : 'Ver más'}</button>}
+        </div>
+      </div>
     </div>
   )
 }
