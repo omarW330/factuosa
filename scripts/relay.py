@@ -235,6 +235,17 @@ def _src_filename(it):
     mo = re.search(r"\[orig:\s*([^\]\r\n]+?)\s*\]", str(it.get("obs") or ""), re.I)
     return mo.group(1).strip() if mo else None
 
+def _iva_pct_from_timp(timp):
+    """Deriva el % de IVA del texto 'timp' (ej. 'IVA 21%' → 21). Solo si hay un único
+    porcentaje distinto y no es 0 (mixtos y exentos 0%/IPSI → None = en blanco)."""
+    if not timp:
+        return None
+    vals = {float(p.replace(",", ".")) for p in re.findall(r"(\d+(?:[.,]\d+)?)\s*%", str(timp))}
+    if len(vals) == 1:
+        v = next(iter(vals))
+        return v if v > 0 else None
+    return None
+
 def _auto_resumen(items):
     """Resumen automático de reserva cuando Cowork no manda 'resumen' en el JSON."""
     if not items:
@@ -314,6 +325,10 @@ def process_web_file(tok, e, move_after):
                 row["codigo"] = it.get("codigo")
             if it.get("iva_pct") is not None:
                 row["iva_pct"] = tonum(it.get("iva_pct"))
+            elif it.get("cliente"):
+                p = _iva_pct_from_timp(it.get("timp"))  # clientes: derivar % del texto 'timp'
+                if p is not None:
+                    row["iva_pct"] = p
             rows.append(row)
         if rows:
             # UPSERT por (tanda,item_id): conserva el id de la factura → 'revisiones' sobrevive al reprocesar
